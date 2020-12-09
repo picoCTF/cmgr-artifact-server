@@ -1,0 +1,12 @@
+version: "3.7"
+services:
+  server:
+    image: picoctf/cmgr-artifact-server
+    build:
+      context: .
+    restart: always
+    ports:
+      - target: 8000
+        published: 4201
+        protocol: tcp
+        mode: host

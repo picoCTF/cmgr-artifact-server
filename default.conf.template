@@ -1,0 +1,37 @@
+server {
+  listen 8000;
+  client_max_body_size 0;
+  access_log off;
+  server_tokens off;
+  resolver ${NAMESERVER} valid=10s ipv6=off; # see 101-use-resolv-conf.sh
+  error_page 404             /404.html;
+  error_page 500 502 503 504 /50x.html;
+
+  if ($request_method !~ ^(GET|HEAD)$ ) {
+    return 405;
+  }
+
+  set $cmgrd_endpoint http://${CMGRD_HOST}:${CMGRD_PORT};
+
+  location ~ ^/artifacts/(\d+)/artifacts.tar.gz$ {
+    return 404;
+  }
+
+  location ~ ^/artifacts/(\d+)/(.+)$ {
+    proxy_pass $cmgrd_endpoint/builds/$1/$2;
+    proxy_pass_request_headers off;
+    proxy_pass_request_body off;
+    proxy_intercept_errors on;
+    add_header Content-Disposition 'attachment; filename="$2"';
+  }
+
+  location = /nginx-health {
+    access_log off;
+    default_type text/plain;
+    return 200 "healthy\n";
+  }
+
+  location / {
+    return 404;
+  }
+}
