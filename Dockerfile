@@ -1,4 +1,4 @@
-FROM nginx:1.19.6
+FROM nginx:1.19.7
 
 ENV CMGRD_HOST host.docker.internal
 ENV CMGRD_PORT 4200
