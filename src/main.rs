@@ -1,4 +1,5 @@
 use clap::{App, Arg};
+use cmgr_artifact_server::{Backend, S3, Selfhosted};
 fn main() {
     let matches = App::new(clap::crate_name!())
         .version(clap::crate_version!())
@@ -39,4 +40,23 @@ fn main() {
             .number_of_values(1)
         )
         .get_matches();
+
+        let options = if let Some(v) = matches.values_of("backend-option") {
+            v.collect::<Vec<&str>>()
+        } else {
+            vec![]
+        };
+        let options = options.as_slice();
+        match matches.value_of("backend").unwrap() {
+            "selfhosted" => run_backend::<Selfhosted>(&options),
+            "s3" => run_backend::<S3>(&options),
+            _ => panic!("Unimplemented backend")  // TODO: use enum instead
+        };
+}
+
+fn run_backend<T: Backend>(options: &[&str]) {
+    match T::new(&options) {
+        Ok(backend) => backend.run(),
+        Err(error) => {eprintln!("{}", error);}
+    }
 }
