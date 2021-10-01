@@ -3,13 +3,17 @@
 A server for automatically handling the distribution of
 [cmgr](https://github.com/ArmyCyberInstitute/cmgr) build artifacts.
 
-`cmgr-artifact-server` is intended to run alongside `cmgrd` and can operate in one of two modes.
-Similarly to `cmgrd`, it is a single binary requiring minimal configuration.
+`cmgr-artifact-server` is intended to run alongside `cmgrd` and supports multiple file hosting
+backends. Similarly to `cmgrd`, it is a single binary and requires minimal configuration.
 
-## Testing mode (file server)
+The `CMGR_ARTIFACT_DIR` environment variable (also used by `cmgrd`) determines which artifacts to
+serve, while the backend and other options are specified via flags.
 
-Testing mode provides a simple way to serve build artifacts over HTTP without exposing the full
-`cmgrd` API to end users. In this mode, `cmgr-artifact-server` functions as a simple web server.
+## `selfhosted` backend
+
+The `selfhosted` backend provides a simple way to serve build artifacts over HTTP without exposing
+the full `cmgrd` API to end users. `cmgr-artifact-server` itself will run a web server for generated
+artifact files.
 
 ```bash
 # Artifact files can be served by the cmgrd API, but this also exposes other endpoints:
@@ -18,31 +22,31 @@ $ curl http://localhost:4200/builds/1/file.c  # 200 OK
 $ curl http://localhost:4200/builds/1  # 200 OK
 $ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 200 OK
 
-# In testing mode, cmgr-artifact-server serves individual artifact files only:
-$ cmgr-artifact-server -m testing -d
+# With the selfhosted backend, cmgr-artifact-server serves individual artifact files only:
+$ cmgr-artifact-server -b selfhosted -d
 $ curl http://localhost:4201/artifacts/1/file.c  # 200 OK
 $ curl http://localhost:4201/artifacts/1  # 404 Not Found
 $ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 404 Not Found
 ```
 
-This mode is suitable only for local development or testing environments. TLS termination is not
+This backend is suitable only for local development or testing environments. TLS termination is not
 supported.
 
-When using `cmgr-artifact-server` in testing mode with the [picoCTF
+When using the `selfhosted` backend with the [picoCTF
 platform](https://github.com/picoCTF/platform), specify `http://hostname:4201/artifacts` as the
 challenge server's **artifact base URL**.
 
-## Production mode (cloud upload)
+## `s3` backend
 
-In production mode, `cmgr-artifact-server` does not handle requests itself, but instead watches
-`CMGR_ARTIFACT_DIR` for changes and syncs any updated files to a cloud storage provider. Currently,
-only Amazon S3 is supported.
+This backend watches `CMGR_ARTIFACT_DIR` for changes and syncs any updated files to the configured
+S3 bucket. It can also automatically generate invalidations for an associated CloudFront
+distribution.
 
 ```bash
-$ cmgr-artifact-server -m production -d -b s3 \
-> --backend-opt bucket=sample-bucket-name \
-> --backend-opt path-prefix=ctf-artifacts \
-> --backend-opt cloudfront-distribution=EDFDVBD6EXAMPLE
+$ cmgr-artifact-server -b s3 -d \
+> --backend-option bucket=sample-bucket-name \
+> --backend-option path-prefix=ctf-artifacts \
+> --backend-option cloudfront-distribution=EDFDVBD6EXAMPLE
 
 # Creates a new build:
 $ cmgr build cmgr/examples/custom-socat 1
@@ -59,21 +63,26 @@ $ curl https://your-cloudfront-distribution.com/ctf-artifacts/4/file.c  # 200 OK
 Note that there will necessarily be some delay between `cmgr(d)` reporting a build as successful and
 the completed upload of its associated artifacts.
 
-When using `cmgr-artifact-server` in production mode with the [picoCTF
-platform](https://github.com/picoCTF/platform), specify your bucket or CloudFront distribution URL
-(including any configured path prefix) as the challenge server's **artifact base URL**.
+When the `s3` backend with the [picoCTF platform](https://github.com/picoCTF/platform), specify your
+bucket or CloudFront distribution URL (including path prefix, if applicable) as the challenge
+server's **artifact base URL**.
 
 ## Flags
 
 | short | long | description |
 | --- | --- | --- |
-| `-b` | `--backend` | `production` mode backend. Currently only accepts `s3`. Ignored in `testing` mode. |
-| `-d` | `--daemonize` | Run `cmgr-artifact-server` in the background and do not log to stdout. |
-| `-i` | `--interface` | Interface to bind to in `testing` mode. Defaults to `0.0.0.0`. |
-| `-l` | `--log-level` | Specify log level from the usual options. Defaults to `INFO`. |
-| `-m` | `--mode` | One of `testing` or `production`. If `production`, `-b` must be specified as well. |
-| `-o` | `--backend-opt` | Backend-specific options in `key=value` format. Some may be required, see backend-specific documentation. |
-| `-p` | `--port` | Port to bind to in `testing` mode. Defaults to `4201`. |
+| `-b` | `--backend` | File hosting backend. Options: `selfhosted`, `s3`. |
+| `-d` | `--daemonize` | Run `cmgr-artifact-server` in the background and do not log to stdout/stderr. |
+| `-h` | `--help` | Prints help information. |
+| `-l` | `--log-level` | Specify log level from the usual options. Defaults to `info`. |
+| `-o` | `--backend-option` | Backend-specific option in `key=value` format. May be specified multiple times. Some options may be required - see backend-specific documentation. |
+| `-V` | `--version` | Prints version information. |
+
+### `selfhosted` backend options
+
+| key | required? | description |
+| --- | --- | --- |
+| address | no | Socket address to bind to. Defaults to `0.0.0.0:4201`. |
 
 ### `s3` backend options
 
