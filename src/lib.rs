@@ -1,6 +1,22 @@
 use std::fmt::Display;
+use std::collections::HashMap;
+use std::error::Error;
 
+#[derive(Debug)]
+pub struct OptionParsingError;
+
+impl Error for OptionParsingError {}
+
+impl Display for OptionParsingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Encountered an invalid option. Backend options must be specified in key=value format.")
+    }
+}
+
+#[derive(Debug)]
 pub struct BackendCreationError;
+
+impl Error for BackendCreationError {}
 
 impl Display for BackendCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -16,7 +32,7 @@ pub trait Backend: Sized {
     fn get_required_options() -> &'static [&'static str];
 
     /// Create an instance of the backend if all required options are provided.
-    fn new(options: &[&str]) -> Result<Self, BackendCreationError>;
+    fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError>;
 
     /// Runs the backend.
     fn run(&self);
@@ -36,7 +52,7 @@ impl Backend for Selfhosted {
         &[]
     }
 
-    fn new(options: &[&str]) -> Result<Self, BackendCreationError> {
+    fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
         todo!()
     }
 
@@ -61,7 +77,7 @@ impl Backend for S3 {
         &["bucket"]
     }
 
-    fn new(options: &[&str]) -> Result<Self, BackendCreationError> {
+    fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
         Err(BackendCreationError)
     }
 
