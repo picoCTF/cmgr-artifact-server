@@ -3,14 +3,16 @@ use std::{collections::HashMap};
 use std::error::Error;
 use std::process;
 use cmgr_artifact_server::{Backend, BackendCreationError, OptionParsingError, S3, Selfhosted};
-fn main() {
-    if let Err(e) = run_app() {
+
+#[tokio::main]
+async fn main() {
+    if let Err(e) = run_app().await {
         eprintln!("{}", e);
         process::exit(1);
     }
 }
 
-fn run_app() -> Result<(), Box<dyn Error>> {
+async fn run_app() -> Result<(), Box<dyn Error>> {
     let matches = App::new(clap::crate_name!())
     .version(clap::crate_version!())
     .author(clap::crate_authors!())
@@ -58,8 +60,8 @@ fn run_app() -> Result<(), Box<dyn Error>> {
     };
     let options = parse_options(options)?;
     match matches.value_of("backend").unwrap() {
-        "selfhosted" => run_backend::<Selfhosted>(options),
-        "s3" => run_backend::<S3>(options),
+        "selfhosted" => Selfhosted::new(options)?.run().await,
+        "s3" => S3::new(options)?.run().await,
         _ => panic!("Unreachable - invalid backend")  // TODO: use enum instead
     }?;
     Ok(())
@@ -75,10 +77,4 @@ fn parse_options(options: Vec<&str>) -> Result<HashMap<&str, &str>, OptionParsin
         }
     }
     Ok(map)
-}
-
-fn run_backend<T: Backend>(options: HashMap<&str, &str>) -> Result<(), BackendCreationError>{
-    let backend = T::new(options)?;
-    backend.run();
-    Ok(())
 }
