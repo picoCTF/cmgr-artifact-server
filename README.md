@@ -23,7 +23,7 @@ $ curl http://localhost:4200/builds/1  # 200 OK
 $ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 200 OK
 
 # With the selfhosted backend, cmgr-artifact-server serves individual artifact files only:
-$ cmgr-artifact-server -b selfhosted -d
+$ cmgr-artifact-server -b selfhosted &
 $ curl http://localhost:4201/artifacts/1/file.c  # 200 OK
 $ curl http://localhost:4201/artifacts/1  # 404 Not Found
 $ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 404 Not Found
@@ -43,10 +43,10 @@ S3 bucket. It can also automatically generate invalidations for an associated Cl
 distribution.
 
 ```bash
-$ cmgr-artifact-server -b s3 -d \
+$ cmgr-artifact-server -b s3 \
 > --backend-option bucket=sample-bucket-name \
 > --backend-option path-prefix=ctf-artifacts \
-> --backend-option cloudfront-distribution=EDFDVBD6EXAMPLE
+> --backend-option cloudfront-distribution=EDFDVBD6EXAMPLE &
 
 # Creates a new build:
 $ cmgr build cmgr/examples/custom-socat 1
@@ -72,7 +72,6 @@ server's **artifact base URL**.
 | short | long | description |
 | --- | --- | --- |
 | `-b` | `--backend` | File hosting backend. Options: `selfhosted`, `s3`. |
-| `-d` | `--daemonize` | Run `cmgr-artifact-server` in the background and do not log to stdout/stderr. |
 | `-h` | `--help` | Prints help information. |
 | `-l` | `--log-level` | Specify log level from the usual options. Defaults to `info`. |
 | `-o` | `--backend-option` | Backend-specific option in `key=value` format. May be specified multiple times. Some options may be required - see backend-specific documentation. |
