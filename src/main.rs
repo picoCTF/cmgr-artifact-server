@@ -1,5 +1,7 @@
 use clap::{App, Arg};
+use std::path::{Path, PathBuf};
 use std::{collections::HashMap};
+use std::env;
 use std::error::Error;
 use std::process;
 use cmgr_artifact_server::{Backend, OptionParsingError, S3, Selfhosted};
@@ -53,15 +55,22 @@ async fn run_app() -> Result<(), Box<dyn Error>> {
     )
     .get_matches();
 
+    // Collect supplied backend options
     let options = if let Some(v) = matches.values_of("backend-option") {
         v.collect::<Vec<&str>>()
     } else {
         vec![]
     };
     let options = parse_options(options)?;
+
+    // Determine artifact directory
+    let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or(".".into());
+    let artifact_dir = Path::new(&artifact_dir);
+
+    // Start backend
     match matches.value_of("backend").unwrap() {
-        "selfhosted" => Selfhosted::new(options)?.run().await,
-        "s3" => S3::new(options)?.run().await,
+        "selfhosted" => Selfhosted::new(options)?.run(&artifact_dir).await,
+        "s3" => S3::new(options)?.run(&artifact_dir).await,
         _ => panic!("Unreachable - invalid backend")  // TODO: use enum instead
     }?;
     Ok(())

@@ -42,7 +42,7 @@ pub trait Backend: Sized {
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError>;
 
     /// Runs the backend.
-    async fn run(&self) -> Result<(), Box<dyn std::error::Error>>;
+    async fn run(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 pub struct Selfhosted {
@@ -80,9 +80,9 @@ impl Backend for Selfhosted {
         })
     }
 
-    async fn run(&self) -> Result<(), Box<dyn Error>> {
+    async fn run(&self, path: &Path) -> Result<(), Box<dyn Error>> {
         let addr: SocketAddr = self.address.parse()?;
-        let static_ = hyper_staticfile::Static::new(Path::new(""));
+        let static_ = hyper_staticfile::Static::new(path);
 
         let make_service = make_service_fn(|_| {
             let static_ = static_.clone();
@@ -120,7 +120,7 @@ impl Backend for S3 {
         Err(BackendCreationError)
     }
 
-    async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 }
