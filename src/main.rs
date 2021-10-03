@@ -1,10 +1,10 @@
 use clap::{App, Arg};
-use std::path::{Path, PathBuf};
-use std::{collections::HashMap};
+use cmgr_artifact_server::{Backend, OptionParsingError, Selfhosted, S3};
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
+use std::path::Path;
 use std::process;
-use cmgr_artifact_server::{Backend, OptionParsingError, S3, Selfhosted};
 
 #[tokio::main]
 async fn main() {
@@ -64,14 +64,14 @@ async fn run_app() -> Result<(), Box<dyn Error>> {
     let options = parse_options(options)?;
 
     // Determine artifact directory
-    let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or(".".into());
+    let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
     let artifact_dir = Path::new(&artifact_dir);
 
     // Start backend
     match matches.value_of("backend").unwrap() {
-        "selfhosted" => Selfhosted::new(options)?.run(&artifact_dir).await,
-        "s3" => S3::new(options)?.run(&artifact_dir).await,
-        _ => panic!("Unreachable - invalid backend")  // TODO: use enum instead
+        "selfhosted" => Selfhosted::new(options)?.run(artifact_dir).await,
+        "s3" => S3::new(options)?.run(artifact_dir).await,
+        _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())
 }
@@ -82,7 +82,7 @@ fn parse_options(options: Vec<&str>) -> Result<HashMap<&str, &str>, OptionParsin
         if let Some((key, value)) = option.split_once("=") {
             map.insert(key, value);
         } else {
-            return Err(OptionParsingError)
+            return Err(OptionParsingError);
         }
     }
     Ok(map)

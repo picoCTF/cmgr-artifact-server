@@ -1,17 +1,17 @@
 use async_trait::async_trait;
 use blake2::{Blake2b, Digest};
 use flate2::read::GzDecoder;
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Request, Response, Server};
 use hyper_staticfile::Static;
-use tar::Archive;
-use std::fmt::Display;
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::{Path, PathBuf};
-use std::io::{Read, Seek, SeekFrom};
+use std::fmt::Display;
 use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
-use hyper::{Body, Request, Response, Server};
-use hyper::service::{make_service_fn, service_fn};
+use std::path::{Path, PathBuf};
+use tar::Archive;
 
 #[derive(Debug)]
 pub struct OptionParsingError;
@@ -20,7 +20,10 @@ impl Error for OptionParsingError {}
 
 impl Display for OptionParsingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Encountered an invalid option. Backend options must be specified in key=value format.")
+        write!(
+            f,
+            "Encountered an invalid option. Backend options must be specified in key=value format."
+        )
     }
 }
 
@@ -31,7 +34,10 @@ impl Error for BackendCreationError {}
 
 impl Display for BackendCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Unable to initialize backend. Some required options were not provided.")
+        write!(
+            f,
+            "Unable to initialize backend. Some required options were not provided."
+        )
     }
 }
 
@@ -55,7 +61,10 @@ pub struct Selfhosted {
 }
 
 impl Selfhosted {
-    async fn handle_request<B>(req: Request<B>, static_: Static) -> Result<Response<Body>, std::io::Error> {
+    async fn handle_request<B>(
+        req: Request<B>,
+        static_: Static,
+    ) -> Result<Response<Body>, std::io::Error> {
         if req.uri().path() == "/health" {
             let res = http::Response::builder()
                 .status(http::StatusCode::OK)
@@ -94,7 +103,8 @@ impl Selfhosted {
         let mut hasher = Blake2b::new();
         let mut tarball = File::open(tarball_path)?;
         let mut buf = [0; 4096];
-        loop {  // Avoid reading all of tarball into memory at once
+        loop {
+            // Avoid reading all of tarball into memory at once
             match tarball.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     hasher.update(&buf[..n]);
@@ -107,7 +117,7 @@ impl Selfhosted {
         if let Ok(recorded_hash) = fs::read(&checksum_path) {
             if recorded_hash == tarball_hash.as_slice() {
                 // Current cache dir matches tarball
-                return Ok(())
+                return Ok(());
             }
         }
         Selfhosted::maybe_remove_dir(&cache_dir_path)?;
@@ -127,15 +137,14 @@ impl Selfhosted {
             Err(e) => match e.kind() {
                 // TODO: ErrorKind::NotADirectory would be better but is unstable
                 std::io::ErrorKind::NotFound => Ok(()),
-                _ => Err(e)
-            }
+                _ => Err(e),
+            },
         }
     }
 }
 
 #[async_trait]
 impl Backend for Selfhosted {
-
     fn get_options() -> &'static [&'static str] {
         &["address"]
     }
@@ -146,7 +155,10 @@ impl Backend for Selfhosted {
 
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
         Ok(Selfhosted {
-            address: options.get("address").unwrap_or(&"0.0.0.0:4201").to_string(),
+            address: options
+                .get("address")
+                .unwrap_or(&"0.0.0.0:4201")
+                .to_string(),
         })
     }
 
@@ -160,7 +172,9 @@ impl Backend for Selfhosted {
         let make_service = make_service_fn(|_| {
             let static_ = static_.clone();
             async {
-                Ok::<_, hyper::Error>(service_fn(move |req| Selfhosted::handle_request(req, static_.clone())))
+                Ok::<_, hyper::Error>(service_fn(move |req| {
+                    Selfhosted::handle_request(req, static_.clone())
+                }))
             }
         });
 
