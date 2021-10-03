@@ -4,7 +4,6 @@ use std::fmt::Display;
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use hyper::{Body, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
@@ -52,10 +51,9 @@ pub struct Selfhosted {
 
 impl Selfhosted {
     async fn handle_request<B>(req: Request<B>, static_: Static) -> Result<Response<Body>, std::io::Error>{
-        if req.uri().path() == "/" {
+        if req.uri().path() == "/health" {
             let res = http::Response::builder()
-                .status(http::StatusCode::MOVED_PERMANENTLY)
-                .header(http::header::LOCATION, "/hyper_staticfile/")
+                .status(http::StatusCode::OK)
                 .body(hyper::Body::empty())
                 .expect("Unable to build response");
             Ok(res)
@@ -100,7 +98,6 @@ impl Backend for Selfhosted {
         }
         Ok(())
     }
-
 }
 
 pub struct S3 {
