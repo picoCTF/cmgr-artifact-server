@@ -1,8 +1,9 @@
 use async_trait::async_trait;
+use hyper_staticfile::Static;
 use std::fmt::Display;
 use std::collections::HashMap;
 use std::error::Error;
-use tokio::runtime::Runtime;
+use std::path::Path;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use hyper::{Body, Request, Response, Server};
@@ -50,8 +51,17 @@ pub struct Selfhosted {
 }
 
 impl Selfhosted {
-    async fn hello_world(_req: Request<Body>) -> Result<Response<Body>, Infallible> {
-        Ok(Response::new("Hello, World".into()))
+    async fn handle_request<B>(req: Request<B>, static_: Static) -> Result<Response<Body>, std::io::Error>{
+        if req.uri().path() == "/" {
+            let res = http::Response::builder()
+                .status(http::StatusCode::MOVED_PERMANENTLY)
+                .header(http::header::LOCATION, "/hyper_staticfile/")
+                .body(hyper::Body::empty())
+                .expect("Unable to build response");
+            Ok(res)
+        } else {
+            static_.clone().serve(req).await
+        }
     }
 }
 
@@ -73,19 +83,18 @@ impl Backend for Selfhosted {
     }
 
     async fn run(&self) -> Result<(), Box<dyn Error>> {
-        // We'll bind to 127.0.0.1:3000
-        let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+        let addr: SocketAddr = self.address.parse()?;
+        let static_ = hyper_staticfile::Static::new(Path::new(""));
 
-        // A `Service` is needed for every connection, so this
-        // creates one from our `hello_world` function.
-        let make_svc = make_service_fn(|_conn| async {
-            // service_fn converts our function into a `Service`
-            Ok::<_, Infallible>(service_fn(Selfhosted::hello_world))
+        let make_service = make_service_fn(|_| {
+            let static_ = static_.clone();
+            async {
+                Ok::<_, hyper::Error>(service_fn(move |req| Selfhosted::handle_request(req, static_.clone())))
+            }
         });
 
-        let server = Server::bind(&addr).serve(make_svc);
+        let server = Server::bind(&addr).serve(make_service);
 
-        // Run this server for... forever!
         if let Err(e) = server.await {
             eprintln!("server error: {}", e);
         }

@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 async-trait = "0.1.51"
 clap = "2.33.3"
+http = "0.2.5"
 hyper = { version = "0.14.13", features=["full"] }
 hyper-staticfile = "0.6.0"
 tokio = { version = "1.12.0", features = ["full"] }

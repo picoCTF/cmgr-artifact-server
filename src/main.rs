@@ -2,7 +2,7 @@ use clap::{App, Arg};
 use std::{collections::HashMap};
 use std::error::Error;
 use std::process;
-use cmgr_artifact_server::{Backend, BackendCreationError, OptionParsingError, S3, Selfhosted};
+use cmgr_artifact_server::{Backend, OptionParsingError, S3, Selfhosted};
 
 #[tokio::main]
 async fn main() {
