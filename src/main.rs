@@ -55,6 +55,9 @@ async fn run_app() -> Result<(), Box<dyn Error>> {
     )
     .get_matches();
 
+    // Initialize logger
+    env_logger::builder().parse_filters(matches.value_of("log-level").unwrap()).init();
+
     // Collect supplied backend options
     let options = if let Some(v) = matches.values_of("backend-option") {
         v.collect::<Vec<&str>>()
