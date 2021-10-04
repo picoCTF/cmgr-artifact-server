@@ -1,4 +1,4 @@
-use crate::{Backend, BackendCreationError};
+use crate::{Backend, BackendCreationError, TarballEvent};
 use async_trait::async_trait;
 use blake2::{Blake2b, Digest};
 use flate2::read::GzDecoder;
@@ -14,6 +14,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tar::Archive;
+use tokio::sync::mpsc::Receiver;
 
 #[derive(Debug)]
 pub struct Selfhosted {
@@ -147,10 +148,14 @@ impl Backend for Selfhosted {
         Ok(backend)
     }
 
-    async fn run(&self, path: &Path) -> Result<(), Box<dyn Error>> {
+    async fn run(
+        &self,
+        artifact_dir: &Path,
+        _rx: &mut Receiver<TarballEvent>,
+    ) -> Result<(), Box<dyn Error>> {
         let addr: SocketAddr = self.address.parse()?;
         const CACHE_SUBDIR: &str = ".artifact_server_cache";
-        let mut path = PathBuf::from(path);
+        let mut path = PathBuf::from(artifact_dir);
         path.push(CACHE_SUBDIR);
 
         let make_service = make_service_fn(|_| {

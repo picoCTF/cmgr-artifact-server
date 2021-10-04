@@ -1,7 +1,8 @@
-use crate::{Backend, BackendCreationError};
+use crate::{Backend, BackendCreationError, TarballEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
+use tokio::sync::mpsc::Receiver;
 
 #[derive(Debug)]
 pub struct S3 {
@@ -21,10 +22,22 @@ impl Backend for S3 {
     }
 
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
-        todo!()
+        // todo: check required options
+        Ok(Self {
+            bucket: "fsfd".into(),
+            path_prefix: "test".into(),
+            cloudfront_distribution: None,
+        })
     }
 
-    async fn run(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        todo!()
+    async fn run(
+        &self,
+        artifact_dir: &Path,
+        rx: &mut Receiver<TarballEvent>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        while let Some(event) = rx.recv().await {
+            println!("{:?}", event);
+        }
+        Ok(())
     }
 }

@@ -1,10 +1,9 @@
 use clap::{App, Arg};
-use cmgr_artifact_server::{Backend, OptionParsingError, Selfhosted, S3};
+use cmgr_artifact_server::{watch_dir, Backend, OptionParsingError, Selfhosted, S3};
 use log::debug;
 use std::collections::HashMap;
 use std::env;
-use std::error::Error;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process;
 
 #[tokio::main]
@@ -15,7 +14,7 @@ async fn main() {
     }
 }
 
-async fn run_app() -> Result<(), Box<dyn Error>> {
+async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let matches = App::new(clap::crate_name!())
     .version(clap::crate_version!())
     .author(clap::crate_authors!())
@@ -67,13 +66,16 @@ async fn run_app() -> Result<(), Box<dyn Error>> {
 
     // Determine artifact directory
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
-    let artifact_dir = Path::new(&artifact_dir);
+    let artifact_dir = PathBuf::from(&artifact_dir);
     debug!("Determined artifact dir: {}", &artifact_dir.display());
+
+    // Watch artifact directory
+    let mut rx = watch_dir(&artifact_dir);
 
     // Start backend
     match matches.value_of("backend").unwrap() {
-        "selfhosted" => Selfhosted::new(options)?.run(artifact_dir).await,
-        "s3" => S3::new(options)?.run(artifact_dir).await,
+        "selfhosted" => Selfhosted::new(options)?.run(&artifact_dir, &mut rx).await,
+        "s3" => S3::new(options)?.run(&artifact_dir, &mut rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())
