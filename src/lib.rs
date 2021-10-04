@@ -229,10 +229,10 @@ impl Backend for S3 {
     }
 
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
-        Err(BackendCreationError)
+        todo!()
     }
 
     async fn run(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
+        todo!()
     }
 }
