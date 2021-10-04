@@ -3,8 +3,8 @@ use blake2::{Blake2b, Digest};
 use flate2::read::GzDecoder;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
-use hyper_staticfile::Static;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
 use std::fs::{self, File};
@@ -63,7 +63,7 @@ pub struct Selfhosted {
 impl Selfhosted {
     async fn handle_request<B>(
         req: Request<B>,
-        static_: Static,
+        artifact_dir: PathBuf,
     ) -> Result<Response<Body>, std::io::Error> {
         if req.uri().path() == "/health" {
             let res = http::Response::builder()
@@ -73,9 +73,23 @@ impl Selfhosted {
             Ok(res)
         } else {
             if let Some((build, _file)) = req.uri().path()[1..].split_once("/") {
-                Self::check_cache(build, &static_.root).expect("Error updating artifact cache");
+                Self::check_cache(build, &artifact_dir).expect("Error updating artifact cache");
             }
-            static_.clone().serve(req).await
+            let result = hyper_staticfile::resolve(&artifact_dir, &req)
+                .await
+                .unwrap();
+            let mut response = hyper_staticfile::ResponseBuilder::new()
+                .request(&req)
+                .build(result)
+                .unwrap();
+            if response.status() == http::StatusCode::OK {
+                let headers = response.headers_mut();
+                headers.insert(
+                    http::header::CONTENT_DISPOSITION,
+                    http::HeaderValue::try_from("attachment").unwrap(),
+                );
+            }
+            Ok(response)
         }
     }
 
@@ -167,22 +181,16 @@ impl Backend for Selfhosted {
         const CACHE_SUBDIR: &str = ".artifact_server_cache";
         let mut path = PathBuf::from(path);
         path.push(CACHE_SUBDIR);
-        let static_ = hyper_staticfile::Static::new(path);
 
         let make_service = make_service_fn(|_| {
-            let static_ = static_.clone();
+            let path = path.clone();
             async {
-                Ok::<_, hyper::Error>(service_fn(move |req| {
-                    Selfhosted::handle_request(req, static_.clone())
-                }))
+                Ok::<_, hyper::Error>(service_fn(move |req| Selfhosted::handle_request(req, path.clone())))
             }
         });
 
         let server = Server::bind(&addr).serve(make_service);
-
-        if let Err(e) = server.await {
-            eprintln!("server error: {}", e);
-        }
+        server.await?;
         Ok(())
     }
 }
