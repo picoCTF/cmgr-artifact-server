@@ -35,9 +35,7 @@ impl Selfhosted {
             if let Some((build, _file)) = req.uri().path()[1..].split_once("/") {
                 Self::check_cache(build, &artifact_dir).expect("Error updating artifact cache");
             }
-            let result = hyper_staticfile::resolve(&artifact_dir, &req)
-                .await
-                .unwrap();
+            let result = hyper_staticfile::resolve(&artifact_dir, &req).await?;
             let mut response = hyper_staticfile::ResponseBuilder::new()
                 .request(&req)
                 .build(result)
