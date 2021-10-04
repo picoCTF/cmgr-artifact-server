@@ -1,5 +1,6 @@
 use clap::{App, Arg};
 use cmgr_artifact_server::{Backend, OptionParsingError, Selfhosted, S3};
+use log::debug;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -56,7 +57,9 @@ async fn run_app() -> Result<(), Box<dyn Error>> {
     .get_matches();
 
     // Initialize logger
-    env_logger::builder().parse_filters(matches.value_of("log-level").unwrap()).init();
+    env_logger::builder()
+        .parse_filters(matches.value_of("log-level").unwrap())
+        .init();
 
     // Collect supplied backend options
     let options = if let Some(v) = matches.values_of("backend-option") {
@@ -65,10 +68,12 @@ async fn run_app() -> Result<(), Box<dyn Error>> {
         vec![]
     };
     let options = parse_options(options)?;
+    debug!("Supplied backend options: {:?}", options);
 
     // Determine artifact directory
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
     let artifact_dir = Path::new(&artifact_dir);
+    debug!("Determined artifact dir: {}", &artifact_dir.display());
 
     // Start backend
     match matches.value_of("backend").unwrap() {

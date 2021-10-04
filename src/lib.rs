@@ -3,10 +3,11 @@ use blake2::{Blake2b, Digest};
 use flate2::read::GzDecoder;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
+use log::{debug, info};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
@@ -56,6 +57,7 @@ pub trait Backend: Sized {
     async fn run(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+#[derive(Debug)]
 pub struct Selfhosted {
     address: String,
 }
@@ -65,12 +67,11 @@ impl Selfhosted {
         req: Request<B>,
         artifact_dir: PathBuf,
     ) -> Result<Response<Body>, std::io::Error> {
-        if req.uri().path() == "/health" {
-            let res = http::Response::builder()
+        let res = if req.uri().path() == "/health" {
+            http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(hyper::Body::empty())
-                .expect("Unable to build response");
-            Ok(res)
+                .expect("Unable to build response")
         } else {
             if let Some((build, _file)) = req.uri().path()[1..].split_once("/") {
                 Self::check_cache(build, &artifact_dir).expect("Error updating artifact cache");
@@ -89,12 +90,19 @@ impl Selfhosted {
                     http::HeaderValue::try_from("attachment").unwrap(),
                 );
             }
-            Ok(response)
-        }
+            response
+        };
+        info!(
+            "Serving request: {} ({})",
+            req.uri().to_string(),
+            res.status()
+        );
+        Ok(res)
     }
 
     /// Ensures that the unzipped cache directory for the specified build is up to date.
     fn check_cache(build: &str, artifact_dir: &Path) -> Result<(), std::io::Error> {
+        debug!("Checking cache for build {}", build);
         let mut tarball_path = artifact_dir.parent().unwrap().to_path_buf();
         tarball_path.push(format!("{}.tar.gz", build));
 
@@ -108,6 +116,7 @@ impl Selfhosted {
         // If a corresponding ID.tar.gz does not exist, maybe the build ID is no longer valid and we
         // should remove any existing cache directory.
         if !tarball_path.is_file() {
+            debug!("No tarball exists for build {}, removing cache", build);
             Selfhosted::maybe_remove_dir(&cache_dir_path)?;
             return Ok(());
         }
@@ -131,9 +140,11 @@ impl Selfhosted {
         if let Ok(recorded_hash) = fs::read(&checksum_path) {
             if recorded_hash == tarball_hash.as_slice() {
                 // Current cache dir matches tarball
+                debug!("Cache OK for build {}", build);
                 return Ok(());
             }
         }
+        debug!("Recreating cache for build {}", build);
         Selfhosted::maybe_remove_dir(&cache_dir_path)?;
         fs::create_dir_all(&cache_dir_path)?;
         fs::write(&checksum_path, tarball_hash.as_slice())?;
@@ -168,12 +179,14 @@ impl Backend for Selfhosted {
     }
 
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
-        Ok(Selfhosted {
+        let backend = Selfhosted {
             address: options
                 .get("address")
                 .unwrap_or(&"0.0.0.0:4201")
                 .to_string(),
-        })
+        };
+        debug!("Created backend: {:?}", backend);
+        Ok(backend)
     }
 
     async fn run(&self, path: &Path) -> Result<(), Box<dyn Error>> {
@@ -185,16 +198,20 @@ impl Backend for Selfhosted {
         let make_service = make_service_fn(|_| {
             let path = path.clone();
             async {
-                Ok::<_, hyper::Error>(service_fn(move |req| Selfhosted::handle_request(req, path.clone())))
+                Ok::<_, hyper::Error>(service_fn(move |req| {
+                    Selfhosted::handle_request(req, path.clone())
+                }))
             }
         });
 
         let server = Server::bind(&addr).serve(make_service);
+        info!("Starting server ({}). Press CTRL-C to exit.", &self.address);
         server.await?;
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct S3 {
     bucket: String,
     path_prefix: String,
