@@ -26,6 +26,11 @@ impl Selfhosted {
                 .status(http::StatusCode::OK)
                 .body(hyper::Body::empty())
                 .expect("Unable to build response")
+        } else if req.uri().path().ends_with(".__checksum") {
+            http::Response::builder()
+                .status(http::StatusCode::NOT_FOUND)
+                .body(hyper::Body::empty())
+                .expect("Unable to build response")
         } else {
             let result = hyper_staticfile::resolve(&cache_dir, &req).await?;
             let mut response = hyper_staticfile::ResponseBuilder::new()
