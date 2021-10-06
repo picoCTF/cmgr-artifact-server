@@ -88,8 +88,6 @@ Note: IAM user credentials are loaded from the usual sources
 the following permissions for the associated resources:
 
 - `s3:ListBucket`
-- `s3:ListObjectsV2`
-- `s3:HeadObject`
 - `s3:PutObject`
 - `s3:DeleteObject`
 - `cloudfront:CreateInvalidation` (if a CloudFront distribution is specified)
