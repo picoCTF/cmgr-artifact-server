@@ -18,20 +18,21 @@ artifact files.
 ```bash
 # Artifact files can be served by the cmgrd API, but this also exposes other endpoints:
 $ cmgrd &
-$ curl http://localhost:4200/builds/1/file.c  # 200 OK
-$ curl http://localhost:4200/builds/1  # 200 OK
-$ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 200 OK
+$ curl http://localhost:4200/builds/1/file.c            # 200 OK
+$ curl http://localhost:4200/builds/1                   # 200 OK
+$ curl http://localhost:4200/builds/1/artifacts.tar.gz  # 200 OK
+$ curl http://localhost:4201/challenges                 # 200 OK
 
 # With the selfhosted backend, cmgr-artifact-server serves individual artifact files only:
 $ cmgr-artifact-server -b selfhosted &
-$ curl http://localhost:4201/artifacts/1/file.c  # 200 OK
-$ curl http://localhost:4201/artifacts/1  # 404 Not Found
-$ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 404 Not Found
+$ curl http://localhost:4201/1/file.c                   # 200 OK
+$ curl http://localhost:4201/1                          # 404 Not Found
+$ curl http://localhost:4201/1/artifacts.tar.gz         # 404 Not Found
 ```
 
 When using the `selfhosted` backend with the [picoCTF
-platform](https://github.com/picoCTF/platform), specify `http://hostname:4201/artifacts` as the
-challenge server's **artifact base URL**.
+platform](https://github.com/picoCTF/platform), specify `http://hostname:4201` as the challenge
+server's **artifact base URL**.
 
 ## `s3` backend
 
