@@ -54,7 +54,10 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize logger
     env_logger::builder()
-        .parse_filters(matches.value_of("log-level").unwrap())
+        .parse_filters(&format!(
+            "cmgr_artifact_server={}",
+            matches.value_of("log-level").unwrap()
+        ))
         .init();
 
     // Collect supplied backend options
