@@ -96,4 +96,4 @@ the following permissions for the associated resources:
 | --- | --- | --- |
 | bucket | yes | S3 bucket name |
 | path-prefix | no | Slash-delimited path prefix to use when uploading artifacts. |
-| cloudfront-distribution | no | If specified, invalidations will automatically be created as needed for this distribution. Uses `path-prefix` if set. |
+| cloudfront-distribution | no | If specified, will automatically create invalidations when artifacts are updated. Uses `path-prefix` if set (assumes distribution's origin path is the bucket root). |
