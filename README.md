@@ -29,9 +29,6 @@ $ curl http://localhost:4201/artifacts/1  # 404 Not Found
 $ curl http://localhost:4201/artifacts/1/artifacts.tar.gz  # 404 Not Found
 ```
 
-This backend is suitable only for local development or testing environments. TLS termination is not
-supported.
-
 When using the `selfhosted` backend with the [picoCTF
 platform](https://github.com/picoCTF/platform), specify `http://hostname:4201/artifacts` as the
 challenge server's **artifact base URL**.

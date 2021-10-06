@@ -4,7 +4,7 @@ mod selfhosted;
 use async_trait::async_trait;
 use blake2::{Blake2b, Digest};
 use flate2::read::GzDecoder;
-use log::{debug, trace};
+use log::{debug, info, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
 pub use s3::S3;
 pub use selfhosted::Selfhosted;
@@ -150,6 +150,15 @@ fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+/// Converts a PathBuf to a filename string slice.
+/// Panics if the conversion fails.
+fn to_filename_str(path: &Path) -> &str {
+    path.file_name()
+        .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path))
+        .to_str()
+        .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path))
+}
+
 /// Performs a full synchronization of the cache and artifact directories.
 ///
 /// Any new or modified (based on a computed checksum) artifact tarballs will be extracted to the
@@ -159,11 +168,7 @@ pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::
     let mut tarballs: HashMap<String, PathBuf> = HashMap::new();
     for dir_entry in fs::read_dir(&artifact_dir)? {
         let path_buf = dir_entry?.path();
-        let filename = path_buf
-            .file_name()
-            .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path_buf))
-            .to_str()
-            .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path_buf));
+        let filename = to_filename_str(&path_buf);
         if filename.ends_with(".tar.gz") {
             let build_id = filename.trim_end_matches(".tar.gz");
             tarballs.insert(build_id.into(), path_buf);
@@ -176,11 +181,7 @@ pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::
     for dir_entry in fs::read_dir(cache_dir)? {
         let path_buf = dir_entry?.path();
         if path_buf.is_dir() {
-            let dir_name = path_buf
-                .file_name()
-                .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path_buf))
-                .to_str()
-                .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path_buf));
+            let dir_name = to_filename_str(&path_buf);
             cache_dirs.insert(dir_name.into(), path_buf);
         } else {
             // There shouldn't be any individual files in the cache directory
@@ -223,26 +224,71 @@ pub fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> 
     let (tx, rx) = channel(32);
     thread::spawn({
         let artifact_dir = PathBuf::from(artifact_dir);
+        let cache_dir = PathBuf::from(cache_dir);
         move || {
             let (watcher_tx, watcher_rx) = std::sync::mpsc::channel();
-            let mut watcher: RecommendedWatcher =
-                Watcher::new(watcher_tx, Duration::from_secs(2)).unwrap();
+            let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, Duration::from_secs(2))
+                .expect("Failed to create file watcher");
             watcher
                 .watch(&artifact_dir, notify::RecursiveMode::NonRecursive)
-                .unwrap();
+                .expect("Failed to start file watcher");
             loop {
                 match watcher_rx.recv() {
                     Ok(event) => {
-                        trace!("Watch event: {:?}", event);
+                        trace!("Detected file event: {:?}", event);
                         match event {
                             DebouncedEvent::Create(p) => {
-                                tx.blocking_send(BuildEvent::Update(p.to_str().unwrap().into()))
-                                    .expect("Failed to send build event");
+                                let filename = to_filename_str(&p);
+                                if filename.ends_with(".tar.gz") {
+                                    // Artifact tarball creation detected
+                                    let build_id = filename.trim_end_matches(".tar.gz");
+                                    info!("Creating artifact cache for build {}", build_id);
+                                    let mut cache_dir = PathBuf::from(&cache_dir);
+                                    cache_dir.push(build_id);
+                                    extract_to(&cache_dir, &p).unwrap_or_else(|_| {
+                                        panic!("Failed to extract artifact tarball {}", p.display())
+                                    });
+                                    tx.blocking_send(BuildEvent::Update(build_id.into()))
+                                        .expect("Failed to send build event");
+                                }
+                            }
+                            DebouncedEvent::Write(p) => {
+                                let filename = to_filename_str(&p);
+                                if filename.ends_with(".tar.gz") {
+                                    // Artifact tarball update detected
+                                    let build_id = filename.trim_end_matches(".tar.gz");
+                                    info!("Updating artifact cache for build {}", build_id);
+                                    let mut cache_dir = PathBuf::from(&cache_dir);
+                                    cache_dir.push(build_id);
+                                    extract_to(&cache_dir, &p).unwrap_or_else(|_| {
+                                        panic!("Failed to extract artifact tarball {}", p.display())
+                                    });
+                                    tx.blocking_send(BuildEvent::Update(build_id.into()))
+                                        .expect("Failed to send build event");
+                                }
+                            }
+                            DebouncedEvent::Remove(p) => {
+                                let filename = to_filename_str(&p);
+                                if filename.ends_with(".tar.gz") {
+                                    // Artifact tarball removal detected
+                                    let build_id = filename.trim_end_matches(".tar.gz");
+                                    info!("Deleting artifact cache for build {}", build_id);
+                                    let mut cache_dir = PathBuf::from(&cache_dir);
+                                    cache_dir.push(build_id);
+                                    maybe_remove_dir(&cache_dir).unwrap_or_else(|_| {
+                                        panic!(
+                                            "Failed to remove cache directory {}",
+                                            cache_dir.display()
+                                        )
+                                    });
+                                    tx.blocking_send(BuildEvent::Delete(build_id.into()))
+                                        .expect("Failed to send build event");
+                                }
                             }
                             _ => (),
                         }
                     }
-                    Err(e) => println!("watch error: {:?}", e),
+                    Err(e) => panic!("File watcher error: {:?}", e),
                 }
             }
         }
