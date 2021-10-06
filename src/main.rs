@@ -1,8 +1,9 @@
 use clap::{App, Arg};
-use cmgr_artifact_server::{watch_dir, Backend, OptionParsingError, Selfhosted, S3};
-use log::debug;
+use cmgr_artifact_server::{sync_cache, watch_dir, Backend, OptionParsingError, Selfhosted, S3};
+use log::{debug, info};
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process;
 
@@ -68,14 +69,24 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
     let artifact_dir = PathBuf::from(&artifact_dir);
     debug!("Determined artifact dir: {}", &artifact_dir.display());
+    let mut cache_dir = artifact_dir.clone();
+    cache_dir.push(".artifact_server_cache");
+    debug!("Determined cache dir: {}", &cache_dir.display());
+
+    // Ensure cache directory exists
+    fs::create_dir_all(&cache_dir)?;
+
+    // Synchronize cache directory
+    info!("Updating artifact cache");
+    sync_cache(&artifact_dir, &cache_dir)?;
 
     // Watch artifact directory
-    let mut rx = watch_dir(&artifact_dir);
+    let rx = watch_dir(&artifact_dir, &cache_dir);
 
     // Start backend
     match matches.value_of("backend").unwrap() {
-        "selfhosted" => Selfhosted::new(options)?.run(&artifact_dir, &mut rx).await,
-        "s3" => S3::new(options)?.run(&artifact_dir, &mut rx).await,
+        "selfhosted" => Selfhosted::new(options)?.run(&artifact_dir, rx).await,
+        "s3" => S3::new(options)?.run(&artifact_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())

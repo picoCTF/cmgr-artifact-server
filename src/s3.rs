@@ -1,4 +1,4 @@
-use crate::{Backend, BackendCreationError, TarballEvent};
+use crate::{Backend, BackendCreationError, BuildEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
@@ -32,9 +32,13 @@ impl Backend for S3 {
 
     async fn run(
         &self,
-        artifact_dir: &Path,
-        rx: &mut Receiver<TarballEvent>,
+        cache_dir: &Path,
+        mut rx: Receiver<BuildEvent>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Sync existing artifacts
+        // TODO
+
+        // Handle build events
         while let Some(event) = rx.recv().await {
             println!("{:?}", event);
         }

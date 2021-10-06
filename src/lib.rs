@@ -2,16 +2,22 @@ mod s3;
 mod selfhosted;
 
 use async_trait::async_trait;
+use blake2::{Blake2b, Digest};
+use flate2::read::GzDecoder;
+use log::{debug, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
 pub use s3::S3;
 pub use selfhosted::Selfhosted;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
+use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use tar::Archive;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
 
@@ -46,7 +52,7 @@ impl Display for BackendCreationError {
 /// Represents detected changes to artifact tarballs.
 /// The included string is the build ID.
 #[derive(Debug)]
-pub enum TarballEvent {
+pub enum BuildEvent {
     Update(String),
     Delete(String),
 }
@@ -63,17 +69,157 @@ pub trait Backend: Sized {
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError>;
 
     /// Run the backend.
-    /// Should perform any necessary initialization based on existing directory state, then listen
-    /// on the provided channel for TarballEvents and process them sequentially.
+    ///
+    /// The backend is not provided with the artifact directory (i.e. CMGR_ARTIFACT_DIR) itself, but
+    /// rather with a cache directory containing extracted artifact tarballs as subdirectories named
+    /// with the associated build ID. This cache directory is automatically kept up to date by a
+    /// background thread when the server is run as a binary.
+    ///
+    /// When a backend runs, it should first perform any synchronization necessary in order to
+    /// reflect the current contents of the cache directory. For example, if the backend syncs files
+    /// to remote storage, any directories without matching .__checksum files should be re-uploaded,
+    /// and any remote directories which no longer exist in the cache should be removed.
+    ///
+    /// After completing this initial synchronization, the backend should listen on the provided
+    /// channel for build events and take action accordingly. These events are produced when a build
+    /// with artifacts is (re-)created (BuildEvent::Update) or deleted (BuildEvent::Delete), and
+    /// contain the ID of the build. For example, a build's artifacts might be re-uploaded when an
+    /// Update event occurs, or deleted from remote storage when a Delete event occurs.
+    ///
+    /// As there is the potential for race conditions when handling build events, backends must
+    /// process any events with the same build ID serially in the order of their arrival.
     async fn run(
         &self,
-        artifact_dir: &Path,
-        rx: &mut Receiver<TarballEvent>,
+        cache_dir: &Path,
+        mut rx: Receiver<BuildEvent>,
     ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
-/// Spawns a thread watching for changes to artifact tarballs in the specified directory.
-pub fn watch_dir(artifact_dir: &Path) -> Receiver<TarballEvent> {
+/// Returns the checksum of an artifact tarball.
+fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let mut hasher = Blake2b::new();
+    let mut tarball = fs::File::open(tarball)?;
+    let mut buf = [0; 4096];
+    loop {
+        // Avoid reading all of tarball into memory at once
+        match tarball.read(&mut buf) {
+            Ok(n) if n > 0 => {
+                hasher.update(&buf[..n]);
+            }
+            Ok(_) => break,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(hasher.finalize().as_slice().into())
+}
+
+const CHECKSUM_FILENAME: &str = ".__checksum";
+
+/// Returns the tarball checksum stored inside a cache directory.
+fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let mut checksum_path = PathBuf::from(cache_dir);
+    checksum_path.push(CHECKSUM_FILENAME);
+    fs::read(checksum_path)
+}
+
+/// Attempts to remove a directory, suppressing a returned Error if the directory has already
+/// been deleted.
+fn maybe_remove_dir(path: &Path) -> Result<(), std::io::Error> {
+    if let Err(e) = fs::remove_dir_all(path) {
+        return match e.kind() {
+            std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(e),
+        };
+    }
+    Ok(())
+}
+
+/// Recreates the specified chache directory and extracts a tarball there.
+/// Also writes the tarball's checksum to a file named .__checksum.
+fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
+    maybe_remove_dir(cache_dir)?;
+    fs::create_dir_all(cache_dir)?;
+    let mut tarball_file = fs::File::open(tarball)?;
+    tarball_file.seek(SeekFrom::Start(0))?;
+    let tar = GzDecoder::new(tarball_file);
+    let mut archive = Archive::new(tar);
+    archive.unpack(cache_dir)?;
+    let mut checksum_path = PathBuf::from(cache_dir);
+    checksum_path.push(CHECKSUM_FILENAME);
+    fs::write(checksum_path, get_tarball_checksum(tarball)?)?;
+    Ok(())
+}
+
+/// Performs a full synchronization of the cache and artifact directories.
+///
+/// Any new or modified (based on a computed checksum) artifact tarballs will be extracted to the
+/// cache. Any cache subdirectories no longer corresponding to an artifact tarball will be deleted.
+pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::Error> {
+    // Collect build IDs and paths of all existing artifact tarballs
+    let mut tarballs: HashMap<String, PathBuf> = HashMap::new();
+    for dir_entry in fs::read_dir(&artifact_dir)? {
+        let path_buf = dir_entry?.path();
+        let filename = path_buf
+            .file_name()
+            .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path_buf))
+            .to_str()
+            .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path_buf));
+        if filename.ends_with(".tar.gz") {
+            let build_id = filename.trim_end_matches(".tar.gz");
+            tarballs.insert(build_id.into(), path_buf);
+        }
+    }
+    debug!("Found {} artifact tarballs", tarballs.len());
+
+    // Collect build IDs and paths of all existing cache dirs
+    let mut cache_dirs: HashMap<String, PathBuf> = HashMap::new();
+    for dir_entry in fs::read_dir(cache_dir)? {
+        let path_buf = dir_entry?.path();
+        if path_buf.is_dir() {
+            let dir_name = path_buf
+                .file_name()
+                .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path_buf))
+                .to_str()
+                .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path_buf));
+            cache_dirs.insert(dir_name.into(), path_buf);
+        } else {
+            // There shouldn't be any individual files in the cache directory
+            debug!("Removing unrecognized cache file {}", path_buf.display());
+            fs::remove_file(path_buf)?;
+        }
+    }
+    debug!("Found {} cache directories", cache_dirs.len());
+
+    // Ensure that the cache dir for each tarball is up to date
+    for (build_id, tarball) in &tarballs {
+        let mut reason = "missing";
+        if let Some(cache_dir) = cache_dirs.get(build_id) {
+            reason = "outdated";
+            if get_tarball_checksum(tarball)? == get_cache_dir_checksum(cache_dir)? {
+                continue;
+            }
+        }
+        debug!("Cache for build {} is {}, recreating", build_id, reason);
+        let mut build_cache_dir = PathBuf::from(cache_dir);
+        build_cache_dir.push(build_id);
+        extract_to(&build_cache_dir, tarball)?;
+    }
+
+    // Remove any cache dirs without a matching tarball
+    for (build_id, cache_dir) in &cache_dirs {
+        if tarballs.get(build_id).is_none() {
+            debug!("No tarball found for build {}, removing cache", build_id);
+            maybe_remove_dir(cache_dir)?;
+        }
+    }
+    Ok(())
+}
+
+/// Spawns a thread watching for changes to tarballs in the artifact directory.
+///
+/// If an artifact tarball is modified or deleted, its corresponding cache subdirectory is recreated
+/// or deleted before sending a BuildEvent on the returned channel.
+pub fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> {
     let (tx, rx) = channel(32);
     thread::spawn({
         let artifact_dir = PathBuf::from(artifact_dir);
@@ -87,10 +233,10 @@ pub fn watch_dir(artifact_dir: &Path) -> Receiver<TarballEvent> {
             loop {
                 match watcher_rx.recv() {
                     Ok(event) => {
-                        println!("{:?}", event);
+                        trace!("Watch event: {:?}", event);
                         match event {
                             DebouncedEvent::Create(p) => {
-                                tx.blocking_send(TarballEvent::Update(p.to_str().unwrap().into()))
+                                tx.blocking_send(BuildEvent::Update(p.to_str().unwrap().into()))
                                     .expect("Failed to send build event");
                             }
                             _ => (),
