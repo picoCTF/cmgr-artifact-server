@@ -85,8 +85,8 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start backend
     match matches.value_of("backend").unwrap() {
-        "selfhosted" => Selfhosted::new(options)?.run(&artifact_dir, rx).await,
-        "s3" => S3::new(options)?.run(&artifact_dir, rx).await,
+        "selfhosted" => Selfhosted::new(options)?.run(&cache_dir, rx).await,
+        "s3" => S3::new(options)?.run(&cache_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())
