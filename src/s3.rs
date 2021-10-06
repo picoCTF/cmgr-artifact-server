@@ -2,7 +2,7 @@ use crate::{Backend, BackendCreationError, BuildEvent};
 use async_trait::async_trait;
 use aws_sdk_cloudfront::model::{InvalidationBatch, Paths};
 use aws_sdk_s3::ByteStream;
-use log::info;
+use log::{debug, info};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::sync::mpsc::Receiver;
@@ -64,8 +64,26 @@ impl Backend for S3 {
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
         while let Some(event) = rx.recv().await {
-            println!("{:?}", event);
-            // TODO
+            match event {
+                BuildEvent::Update(build) => {
+                    info!("Updating objects for build {}", &build);
+                    self.delete_bucket_dir(&build, &s3_client).await?;
+                    self.upload_cache_dir(&cache_dir, &build, &s3_client)
+                        .await?;
+                    if (&cf_client).is_some() {
+                        self.create_invalidation(&build, &cf_client.as_ref().unwrap())
+                            .await?;
+                    }
+                }
+                BuildEvent::Delete(build) => {
+                    info!("Removing objects for build {}", &build);
+                    self.delete_bucket_dir(&build, &s3_client).await?;
+                    if (&cf_client).is_some() {
+                        self.create_invalidation(&build, &cf_client.as_ref().unwrap())
+                            .await?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -78,14 +96,14 @@ impl S3 {
         s3_client: &aws_sdk_s3::Client,
         cloudfront_client: &Option<aws_sdk_cloudfront::Client>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // List bucket contents
+        debug!("Testing ListObjectsV2");
         s3_client
             .list_objects_v2()
             .bucket(&self.bucket)
             .send()
             .await?;
 
-        // Upload an object
+        debug!("Testing PutObject");
         const TEST_BODY: &[u8] = "test contents".as_bytes();
         let body = ByteStream::from_static(TEST_BODY);
         let test_filename = format!("{}{}", &self.path_prefix, "iam_test");
@@ -97,7 +115,7 @@ impl S3 {
             .send()
             .await?;
 
-        // Get object metadata
+        debug!("Testing HeadObject");
         s3_client
             .head_object()
             .bucket(&self.bucket)
@@ -105,7 +123,7 @@ impl S3 {
             .send()
             .await?;
 
-        // Get object
+        debug!("Testing GetObject");
         let resp = s3_client
             .get_object()
             .bucket(&self.bucket)
@@ -115,7 +133,7 @@ impl S3 {
         let data = resp.body.collect().await;
         assert_eq!(TEST_BODY, data.unwrap().into_bytes());
 
-        // Delete object
+        debug!("Testing DeleteObject");
         s3_client
             .delete_object()
             .bucket(&self.bucket)
@@ -124,7 +142,7 @@ impl S3 {
             .await?;
 
         if let Some(cf_client) = cloudfront_client {
-            // Create invalidation
+            debug!("Testing CreateInvalidation");
             let batch = InvalidationBatch::builder()
                 .paths(Paths::builder().items(&test_filename).quantity(1).build())
                 .caller_reference(chrono::Utc::now().to_string())
@@ -138,6 +156,34 @@ impl S3 {
         }
 
         Ok(())
+    }
+
+    /// Uploads the specified build's cache directory to the S3 bucket.
+    async fn upload_cache_dir(
+        &self,
+        cache_dir: &Path,
+        build: &str,
+        s3_client: &aws_sdk_s3::Client,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    /// Deletes the specified build's artifact directory from the S3 bucket.
+    async fn delete_bucket_dir(
+        &self,
+        build: &str,
+        s3_client: &aws_sdk_s3::Client,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    /// Invalidates the specified build's artifact directory path from the CloudFront distribution.
+    async fn create_invalidation(
+        &self,
+        build: &str,
+        cloudfront_client: &aws_sdk_cloudfront::Client,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
     }
 
     /// Perform a full synchronization of the cache directory to the S3 bucket.
