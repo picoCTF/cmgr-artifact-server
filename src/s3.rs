@@ -1,5 +1,6 @@
 use crate::{Backend, BackendCreationError, BuildEvent};
 use async_trait::async_trait;
+use log::info;
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::sync::mpsc::Receiver;
@@ -22,12 +23,18 @@ impl Backend for S3 {
     }
 
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
-        // todo: check required options
-        Ok(Self {
-            bucket: "fsfd".into(),
-            path_prefix: "test".into(),
-            cloudfront_distribution: None,
-        })
+        let bucket_name = match options.get("bucket") {
+            Some(bucket_name) => bucket_name,
+            None => return Err(BackendCreationError),
+        };
+        let backend = Self {
+            bucket: bucket_name.to_string(),
+            path_prefix: options.get("path_prefix").unwrap_or(&&"/").to_string(),
+            cloudfront_distribution: options
+                .get("cloudfront_distribution")
+                .map(|v| v.to_string()),
+        };
+        Ok(backend)
     }
 
     async fn run(
@@ -36,9 +43,10 @@ impl Backend for S3 {
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Sync existing artifacts
-        // TODO
+        info!("Syncing current artifact cache to S3");
 
         // Handle build events
+        info!("Watching for changes. Press CTRL-C to exit.");
         while let Some(event) = rx.recv().await {
             println!("{:?}", event);
         }
