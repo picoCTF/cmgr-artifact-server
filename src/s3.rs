@@ -31,7 +31,7 @@ impl Backend for S3 {
         };
         let backend = Self {
             bucket: bucket_name.to_string(),
-            path_prefix: options.get("path_prefix").unwrap_or(&&"/").to_string(),
+            path_prefix: options.get("path_prefix").unwrap_or(&"").to_string(),
             cloudfront_distribution: options
                 .get("cloudfront_distribution")
                 .map(|v| v.to_string()),

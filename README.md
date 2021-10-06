@@ -95,5 +95,5 @@ the following permissions for the associated resources:
 | key | required? | description |
 | --- | --- | --- |
 | bucket | yes | S3 bucket name |
-| path-prefix | no | Slash-delimited path prefix to use when uploading artifacts. Defaults to `/`. |
+| path-prefix | no | Slash-delimited path prefix to use when uploading artifacts. |
 | cloudfront-distribution | no | If specified, invalidations will automatically be created as needed for this distribution. Uses `path-prefix` if set. |
