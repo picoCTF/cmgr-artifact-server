@@ -30,6 +30,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .help("File hosting backend")
         .takes_value(true)
         .possible_values(&["selfhosted", "s3"])
+        .case_insensitive(true)
         .required(true)
     )
     .arg(Arg::with_name("log-level")
@@ -84,7 +85,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let rx = watch_dir(&artifact_dir, &cache_dir);
 
     // Start backend
-    match matches.value_of("backend").unwrap() {
+    match matches.value_of("backend").unwrap().to_lowercase().as_str() {
         "selfhosted" => Selfhosted::new(options)?.run(&cache_dir, rx).await,
         "s3" => S3::new(options)?.run(&cache_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead

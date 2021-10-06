@@ -34,14 +34,14 @@ When using the `selfhosted` backend with the [picoCTF
 platform](https://github.com/picoCTF/platform), specify `http://hostname:4201` as the challenge
 server's **artifact base URL**.
 
-## `s3` backend
+## `S3` backend
 
 This backend watches `CMGR_ARTIFACT_DIR` for changes and syncs any updated files to the configured
 S3 bucket. It can also automatically generate invalidations for an associated CloudFront
 distribution.
 
 ```bash
-$ cmgr-artifact-server -b s3 \
+$ cmgr-artifact-server -b S3 \
 > --backend-option bucket=sample-bucket-name \
 > --backend-option path-prefix=ctf-artifacts \
 > --backend-option cloudfront-distribution=EDFDVBD6EXAMPLE &
@@ -61,15 +61,15 @@ $ curl https://your-cloudfront-distribution.com/ctf-artifacts/4/file.c  # 200 OK
 Note that there will necessarily be some delay between `cmgr(d)` reporting a build as successful and
 the completed upload of its associated artifacts.
 
-When the `s3` backend with the [picoCTF platform](https://github.com/picoCTF/platform), specify your
-bucket or CloudFront distribution URL (including path prefix, if applicable) as the challenge
-server's **artifact base URL**.
+When using the `S3` backend with the [picoCTF platform](https://github.com/picoCTF/platform),
+specify your bucket or CloudFront distribution URL (including path prefix, if applicable) as the
+challenge server's **artifact base URL**.
 
 ## Flags
 
 | short | long | description |
 | --- | --- | --- |
-| `-b` | `--backend` | File hosting backend. Options: `selfhosted`, `s3`. |
+| `-b` | `--backend` | File hosting backend. Options: `selfhosted`, `S3`. |
 | `-h` | `--help` | Prints help information. |
 | `-l` | `--log-level` | Specify log level from the usual options. Defaults to `info`. |
 | `-o` | `--backend-option` | Backend-specific option in `key=value` format. May be specified multiple times. Some options may be required - see backend-specific documentation. |
@@ -81,7 +81,7 @@ server's **artifact base URL**.
 | --- | --- | --- |
 | address | no | Socket address to bind to. Defaults to `0.0.0.0:4201`. |
 
-### `s3` backend options
+### `S3` backend options
 
 Note: IAM user credentials are loaded from the usual sources
 (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `~/.aws/config`, etc.) The provided IAM user requires
