@@ -257,7 +257,7 @@ impl S3 {
         cloudfront_client: &aws_sdk_cloudfront::Client,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let path = format!("/{}{}*", self.path_prefix, build);
-        info!("Creating invalidation for path: {}", &path);
+        debug!("Creating invalidation for path: {}", &path);
         let paths = aws_sdk_cloudfront::model::Paths::builder()
             .items(path)
             .quantity(1)
