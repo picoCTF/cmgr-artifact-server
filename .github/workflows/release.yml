@@ -55,7 +55,7 @@ jobs:
         run: |
           mkdir out
           cp target/release/cmgr-artifact-server out/
-          cp README.md out/
+          cp README.md LICENSE.md CHANGELOG.md out/
           cd out && tar czf cmgr-artifact-server_${suffix}.tar.gz *
         env:
           suffix: ${{ matrix.binary-suffix }}
