@@ -59,6 +59,9 @@ pub enum BuildEvent {
 
 #[async_trait]
 pub trait Backend: Sized {
+    // TODO: currently the get_options() methods are not actually called anywhere. It would be nice
+    // if they were used in the CLI help output or BackendCreationErrors.
+
     /// Return a list of option keys supported by this backend.
     fn get_options() -> &'static [&'static str];
 

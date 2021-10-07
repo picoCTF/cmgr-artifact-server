@@ -1,4 +1,4 @@
-use crate::{Backend, BackendCreationError, BuildEvent, CHECKSUM_FILENAME};
+use crate::{get_cache_dir_checksum, Backend, BackendCreationError, BuildEvent, CHECKSUM_FILENAME};
 use async_trait::async_trait;
 use aws_sdk_cloudfront::model::{InvalidationBatch, Paths};
 use aws_sdk_s3::ByteStream;
@@ -34,8 +34,8 @@ impl Backend for S3 {
         // A root path prefix ("/") must be replaced with an empty string to avoid duplicate leading
         // slashes when used in S3 object keys. Normalize the prefix:
         let path_prefix = options.get("path-prefix").unwrap_or(&"").to_string();
-        let mut path_prefix = path_prefix.trim_start_matches("/").to_string();
-        if path_prefix.len() > 0 && path_prefix.chars().last().unwrap() != '/' {
+        let mut path_prefix = path_prefix.trim_start_matches('/').to_string();
+        if !path_prefix.is_empty() && path_prefix.ends_with('/') {
             path_prefix.push('/');
         }
         debug!("Normalized path prefix: \"{}\"", path_prefix);
@@ -58,10 +58,10 @@ impl Backend for S3 {
         // Create S3 and CloudFront clients
         let shared_config = aws_config::from_env().load().await;
         let s3_client = aws_sdk_s3::Client::new(&shared_config);
-        let cf_client = match self.cloudfront_distribution {
-            Some(_) => Some(aws_sdk_cloudfront::Client::new(&shared_config)),
-            None => None,
-        };
+        let cf_client = self
+            .cloudfront_distribution
+            .as_ref()
+            .map(|_| aws_sdk_cloudfront::Client::new(&shared_config));
 
         // Check that we have sufficient IAM permissions. Better to do this up-front than to
         // unexpectedly fail at runtime.
@@ -70,7 +70,7 @@ impl Backend for S3 {
 
         // Sync existing artifacts
         info!("Syncing current artifact cache to S3");
-        self.synchronize(&cache_dir, &s3_client, &cf_client).await?;
+        self.synchronize(cache_dir, &s3_client, &cf_client).await?;
 
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
@@ -79,10 +79,9 @@ impl Backend for S3 {
                 BuildEvent::Update(build) => {
                     info!("Updating objects for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;
-                    self.upload_cache_dir(&cache_dir, &build, &s3_client)
-                        .await?;
+                    self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
                     if (&cf_client).is_some() {
-                        self.create_invalidation(&build, &cf_client.as_ref().unwrap())
+                        self.create_invalidation(&build, cf_client.as_ref().unwrap())
                             .await?;
                     }
                 }
@@ -90,7 +89,7 @@ impl Backend for S3 {
                     info!("Removing objects for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;
                     if (&cf_client).is_some() {
-                        self.create_invalidation(&build, &cf_client.as_ref().unwrap())
+                        self.create_invalidation(&build, cf_client.as_ref().unwrap())
                             .await?;
                     }
                 }
@@ -219,7 +218,7 @@ impl S3 {
             .into_iter()
             .map(|o| o.key.unwrap())
             .collect();
-        if obj_keys.len() == 0 {
+        if obj_keys.is_empty() {
             // DeleteObjects calls fail if made with an empty object array, so return early
             return Ok(());
         }
@@ -277,8 +276,21 @@ impl S3 {
         &self,
         build: &str,
         s3_client: &aws_sdk_s3::Client,
-    ) -> Option<Vec<u8>> {
-        todo!()
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        let checksum_path = format!("{}{}/{}", &self.path_prefix, build, CHECKSUM_FILENAME);
+        let resp = s3_client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&checksum_path)
+            .send()
+            .await;
+        return match resp {
+            Ok(get_object_output) => {
+                let data = get_object_output.body.collect().await?;
+                Ok(Some(data.into_bytes().to_vec()))
+            }
+            Err(_) => Ok(None),
+        };
     }
 
     /// Perform a full synchronization of the cache directory to the S3 bucket.
