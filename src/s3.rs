@@ -35,7 +35,7 @@ impl Backend for S3 {
         // slashes when used in S3 object keys. Normalize the prefix:
         let path_prefix = options.get("path-prefix").unwrap_or(&"").to_string();
         let mut path_prefix = path_prefix.trim_start_matches('/').to_string();
-        if !path_prefix.is_empty() && path_prefix.ends_with('/') {
+        if !path_prefix.is_empty() && !path_prefix.ends_with('/') {
             path_prefix.push('/');
         }
         debug!("Normalized path prefix: \"{}\"", path_prefix);
