@@ -1,19 +1,36 @@
 # cmgr Artifact Server
 
-A server for automatically handling the distribution of
+A simple daemon to automatically handle the distribution of
 [cmgr](https://github.com/ArmyCyberInstitute/cmgr) build artifacts.
 
 `cmgr-artifact-server` is intended to run alongside `cmgrd` and supports multiple file hosting
-backends. Similarly to `cmgrd`, it is a single binary and requires minimal configuration.
+backends. Like `cmgrd`, it is a single binary and requires minimal configuration.
 
 The `CMGR_ARTIFACT_DIR` environment variable (also used by `cmgrd`) determines which artifacts to
-serve, while the backend and other options are specified via flags.
+distribute, while the backend and any additional settings are specified via command-line options.
 
-## `selfhosted` backend
+Behind the scenes, `cmgr-artifact-server` maintains a cache of extracted artifact tarballs
+(`.artifact_server_cache`) within the specified `CMGR_ARTIFACT_DIR`. A full synchronization of all
+existing local artifacts to the backend is performed upon startup. Any further changes to local
+artifacts (due to build creation, updates, or deletion) are automatically handled as they occur.
+
+## Installation
+
+Download the latest [release](https://github.com/picoCTF/cmgr-artifact-server/releases) for your
+platform, extract the tarball, and copy the binary to an appropriate location:
+
+```bash
+$ tar xzf cmgr-artifact-server_linux_amd64.tar.gz
+$ cp cmgr-artifact-server /usr/local/bin
+```
+
+## Backends
+
+### `selfhosted` backend
 
 The `selfhosted` backend provides a simple way to serve build artifacts over HTTP without exposing
-the full `cmgrd` API to end users. `cmgr-artifact-server` itself will run a web server for generated
-artifact files.
+the full `cmgrd` API to end users. `cmgr-artifact-server` itself will act as a web server for
+generated artifact files.
 
 ```bash
 # Artifact files can be served by the cmgrd API, but this also exposes other endpoints:
@@ -30,15 +47,14 @@ $ curl http://localhost:4201/1                          # 404 Not Found
 $ curl http://localhost:4201/1/artifacts.tar.gz         # 404 Not Found
 ```
 
-When using the `selfhosted` backend with the [picoCTF
-platform](https://github.com/picoCTF/platform), specify `http://hostname:4201` as the challenge
-server's **artifact base URL**.
+When using the this backend with the [picoCTF platform](https://github.com/picoCTF/platform) (note:
+not yet publicly available), specify `http://hostname:4201` as the challenge server's **artifact
+base URL**.
 
-## `S3` backend
+### `S3` backend
 
-This backend watches `CMGR_ARTIFACT_DIR` for changes and syncs any updated files to the configured
-S3 bucket. It can also automatically generate invalidations for an associated CloudFront
-distribution.
+This backend syncs artifact files to a specified S3 bucket. It can also automatically generate
+invalidations for an associated CloudFront distribution.
 
 ```bash
 $ cmgr-artifact-server -b S3 \
@@ -61,17 +77,30 @@ $ curl https://your-cloudfront-distribution.com/ctf-artifacts/4/file.c  # 200 OK
 Note that there will necessarily be some delay between `cmgr(d)` reporting a build as successful and
 the completed upload of its associated artifacts.
 
-When using the `S3` backend with the [picoCTF platform](https://github.com/picoCTF/platform),
-specify your bucket or CloudFront distribution URL (including path prefix, if applicable) as the
-challenge server's **artifact base URL**.
+IAM user credentials are read from the same sources used by the AWS CLI, e.g. the
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables, the  `~/.aws/config` and
+`~/.aws/credentials` files, etc. The provided IAM user requires the following permissions for the
+associated resources:
 
-## Flags
+- `s3:ListBucket`
+- `s3:GetObject`
+- `s3:PutObject`
+- `s3:DeleteObject`
+- `cloudfront:CreateInvalidation` (if a CloudFront distribution is specified)
+
+The backend will check that all necessary IAM actions can be performed before starting.
+
+When using this backend with the [picoCTF platform](https://github.com/picoCTF/platform) (note: not
+yet publicly available), specify your bucket or CloudFront distribution URL (including path prefix,
+if applicable) as the challenge server's **artifact base URL**.
+
+## Options
 
 | short | long | description |
 | --- | --- | --- |
 | `-b` | `--backend` | File hosting backend. Options: `selfhosted`, `S3`. |
 | `-h` | `--help` | Prints help information. |
-| `-l` | `--log-level` | Specify log level from the usual options. Defaults to `info`. |
+| `-l` | `--log-level` | Specify log level. Options: `error`, `warn`, `info`, `debug`, `trace`. Defaults to `info`. |
 | `-o` | `--backend-option` | Backend-specific option in `key=value` format. May be specified multiple times. Some options may be required - see backend-specific documentation. |
 | `-V` | `--version` | Prints version information. |
 
@@ -82,16 +111,6 @@ challenge server's **artifact base URL**.
 | address | no | Socket address to bind to. Defaults to `0.0.0.0:4201`. |
 
 ### `S3` backend options
-
-Note: IAM user credentials are loaded from the usual sources
-(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `~/.aws/config`, etc.) The provided IAM user requires
-the following permissions for the associated resources:
-
-- `s3:ListBucket`
-- `s3:GetObject`
-- `s3:PutObject`
-- `s3:DeleteObject`
-- `cloudfront:CreateInvalidation` (if a CloudFront distribution is specified)
 
 | key | required? | description |
 | --- | --- | --- |
