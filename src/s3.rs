@@ -26,13 +26,23 @@ impl Backend for S3 {
     }
 
     fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
-        let bucket_name = match options.get("bucket") {
-            Some(bucket_name) => bucket_name,
+        let bucket = match options.get("bucket") {
+            Some(bucket_name) => bucket_name.to_string(),
             None => return Err(BackendCreationError),
         };
+        // If non-empty, path prefixes must include a trailing slash, but not a leading slash.
+        // A root path prefix ("/") must be replaced with an empty string to avoid duplicate leading
+        // slashes when used in S3 object keys. Normalize the prefix:
+        let path_prefix = options.get("path-prefix").unwrap_or(&"").to_string();
+        let mut path_prefix = path_prefix.trim_start_matches("/").to_string();
+        if path_prefix.len() > 0 && path_prefix.chars().last().unwrap() != '/' {
+            path_prefix.push('/');
+        }
+        debug!("Normalized path prefix: \"{}\"", path_prefix);
+
         let backend = Self {
-            bucket: bucket_name.to_string(),
-            path_prefix: options.get("path_prefix").unwrap_or(&"").to_string(),
+            bucket,
+            path_prefix,
             cloudfront_distribution: options
                 .get("cloudfront-distribution")
                 .map(|v| v.to_string()),
@@ -136,8 +146,9 @@ impl S3 {
 
         if let Some(cf_client) = cloudfront_client {
             debug!("Testing CreateInvalidation");
+            let path = format!("/{}", &test_filename);
             let batch = InvalidationBatch::builder()
-                .paths(Paths::builder().items(&test_filename).quantity(1).build())
+                .paths(Paths::builder().items(path).quantity(1).build())
                 .caller_reference(chrono::Utc::now().to_string())
                 .build();
             cf_client
