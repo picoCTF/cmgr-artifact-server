@@ -76,6 +76,10 @@ impl Backend for S3 {
         info!("Watching for changes. Press CTRL-C to exit.");
         while let Some(event) = rx.recv().await {
             match event {
+                BuildEvent::Create(build) => {
+                    info!("Uploading objects for build {}", &build);
+                    self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
+                }
                 BuildEvent::Update(build) => {
                     info!("Updating objects for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;

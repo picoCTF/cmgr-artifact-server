@@ -53,6 +53,7 @@ impl Display for BackendCreationError {
 /// The included string is the build ID.
 #[derive(Debug)]
 pub enum BuildEvent {
+    Create(String),
     Update(String),
     Delete(String),
 }
@@ -251,7 +252,7 @@ pub fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> 
                                     extract_to(&cache_dir, &p).unwrap_or_else(|_| {
                                         panic!("Failed to extract artifact tarball {}", p.display())
                                     });
-                                    tx.blocking_send(BuildEvent::Update(build_id.into()))
+                                    tx.blocking_send(BuildEvent::Create(build_id.into()))
                                         .expect("Failed to send build event");
                                 }
                             }
