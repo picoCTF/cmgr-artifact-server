@@ -1,9 +1,13 @@
-use crate::{get_cache_dir_checksum, Backend, BackendCreationError, BuildEvent, CHECKSUM_FILENAME};
+use crate::{
+    get_cache_dir_checksum, to_filename_str, Backend, BackendCreationError, BuildEvent,
+    CHECKSUM_FILENAME,
+};
 use async_trait::async_trait;
 use aws_sdk_cloudfront::model::{InvalidationBatch, Paths};
 use aws_sdk_s3::ByteStream;
 use log::{debug, info};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc::Receiver;
 use walkdir::WalkDir;
@@ -77,11 +81,11 @@ impl Backend for S3 {
         while let Some(event) = rx.recv().await {
             match event {
                 BuildEvent::Create(build) => {
-                    info!("Uploading objects for build {}", &build);
+                    info!("Uploading artifacts for build {}", &build);
                     self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
                 }
                 BuildEvent::Update(build) => {
-                    info!("Updating objects for build {}", &build);
+                    info!("Updating artifacts for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;
                     self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
                     if (&cf_client).is_some() {
@@ -90,7 +94,7 @@ impl Backend for S3 {
                     }
                 }
                 BuildEvent::Delete(build) => {
-                    info!("Removing objects for build {}", &build);
+                    info!("Removing artifacts for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;
                     if (&cf_client).is_some() {
                         self.create_invalidation(&build, cf_client.as_ref().unwrap())
@@ -304,6 +308,101 @@ impl S3 {
         s3_client: &aws_sdk_s3::Client,
         cloudfront_client: &Option<aws_sdk_cloudfront::Client>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        todo!()
+        // Get build IDs and paths of all local cache directories
+        let mut cache_dirs: HashMap<String, PathBuf> = HashMap::new();
+        for dir_entry in fs::read_dir(cache_dir)? {
+            let path_buf = dir_entry?.path();
+            if path_buf.is_dir() {
+                let dir_name = to_filename_str(&path_buf);
+                cache_dirs.insert(dir_name.into(), path_buf);
+            }
+        }
+
+        // Get all build IDs with directories in bucket
+        let mut bucket_build_ids: HashSet<String> = HashSet::new();
+        let mut resp = s3_client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(&self.path_prefix)
+            .delimiter('/')
+            .send()
+            .await?;
+        if let Some(prefixes) = resp.common_prefixes {
+            bucket_build_ids.extend(&mut prefixes.into_iter().map(|p| {
+                p.prefix
+                    .unwrap()
+                    .strip_prefix(&self.path_prefix)
+                    .unwrap()
+                    .trim_end_matches('/')
+                    .to_string()
+            }));
+        }
+        while resp.is_truncated {
+            resp = s3_client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(&self.path_prefix)
+                .delimiter('/')
+                .continuation_token(resp.next_continuation_token.unwrap())
+                .send()
+                .await?;
+            if let Some(prefixes) = resp.common_prefixes {
+                bucket_build_ids.extend(&mut prefixes.into_iter().map(|p| {
+                    p.prefix
+                        .unwrap()
+                        .strip_prefix(&self.path_prefix)
+                        .unwrap()
+                        .trim_end_matches('/')
+                        .to_string()
+                }));
+            }
+        }
+
+        // Ensure that all bucket directories are up to date
+        for (build_id, build_cache_dir) in &cache_dirs {
+            if bucket_build_ids.contains(build_id) {
+                let bucket_checksum = self.get_bucket_dir_checksum(build_id, s3_client).await?;
+                if let Some(bucket_checksum) = bucket_checksum {
+                    if bucket_checksum == get_cache_dir_checksum(build_cache_dir)? {
+                        continue;
+                    }
+                }
+                info!(
+                    "Artifacts for build {} are outdated, reuploading",
+                    &build_id
+                );
+                self.delete_bucket_dir(build_id, s3_client).await?;
+                self.upload_cache_dir(cache_dir, build_id, s3_client)
+                    .await?;
+                if cloudfront_client.is_some() {
+                    self.create_invalidation(build_id, cloudfront_client.as_ref().unwrap())
+                        .await?;
+                }
+            } else {
+                info!(
+                    "Artifacts for build {} not found in bucket, uploading",
+                    &build_id
+                );
+                self.upload_cache_dir(cache_dir, build_id, s3_client)
+                    .await?;
+            }
+        }
+
+        // Remove any bucket directories without a corresponding local cache
+        for build_id in &bucket_build_ids {
+            if !&cache_dirs.contains_key(build_id) {
+                info!(
+                    "Artifacts found in bucket for deleted build {}, removing",
+                    &build_id
+                );
+                self.delete_bucket_dir(build_id, s3_client).await?;
+                if cloudfront_client.is_some() {
+                    self.create_invalidation(build_id, cloudfront_client.as_ref().unwrap())
+                        .await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
