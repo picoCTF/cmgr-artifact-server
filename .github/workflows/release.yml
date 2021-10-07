@@ -32,10 +32,10 @@ jobs:
             binary-suffix: "linux_arm64"
           - runner-os: macos-11
             rustc-target: "x86_64-apple-darwin"
-            binary-suffix: "linux_amd64"
+            binary-suffix: "darwin_amd64"
           - runner-os: macos-11
             rustc-target: "aarch64-apple-darwin"
-            binary-suffix: "linux_arm64"
+            binary-suffix: "darwin_arm64"
     steps:
       - name: Checkout repo
         uses: actions/checkout@v2
