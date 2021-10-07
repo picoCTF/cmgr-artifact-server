@@ -352,6 +352,7 @@ dependencies = [
  "notify",
  "tar",
  "tokio",
+ "walkdir",
 ]
 
 [[package]]

@@ -1,11 +1,12 @@
-use crate::{Backend, BackendCreationError, BuildEvent};
+use crate::{Backend, BackendCreationError, BuildEvent, CHECKSUM_FILENAME};
 use async_trait::async_trait;
 use aws_sdk_cloudfront::model::{InvalidationBatch, Paths};
 use aws_sdk_s3::ByteStream;
 use log::{debug, info};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc::Receiver;
+use walkdir::WalkDir;
 
 #[derive(Debug)]
 pub struct S3 {
@@ -115,14 +116,6 @@ impl S3 {
             .send()
             .await?;
 
-        debug!("Testing HeadObject");
-        s3_client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(&test_filename)
-            .send()
-            .await?;
-
         debug!("Testing GetObject");
         let resp = s3_client
             .get_object()
@@ -165,7 +158,31 @@ impl S3 {
         build: &str,
         s3_client: &aws_sdk_s3::Client,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        todo!()
+        let mut build_cache_dir = PathBuf::from(cache_dir);
+        build_cache_dir.push(build);
+        for entry in WalkDir::new(&build_cache_dir).min_depth(1) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative_path = &entry.path().strip_prefix(&build_cache_dir)?;
+            let mut upload_path = PathBuf::from(&self.path_prefix);
+            upload_path.push(build);
+            upload_path.push(relative_path);
+            debug!("Uploading object: {}", &upload_path.display());
+            let file = tokio::fs::File::open(&entry.path()).await?;
+            let body = ByteStream::from_file(file).await?;
+            s3_client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(upload_path.to_str().unwrap_or_else(|| {
+                    panic!("Failed to convert path {:?} to utf-8", &upload_path)
+                }))
+                .body(body)
+                .send()
+                .await?;
+        }
+        Ok(())
     }
 
     /// Deletes the specified build's artifact directory from the S3 bucket.
@@ -174,7 +191,49 @@ impl S3 {
         build: &str,
         s3_client: &aws_sdk_s3::Client,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        todo!()
+        let prefix = format!("{}{}/", self.path_prefix, build);
+        let resp = s3_client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .send()
+            .await?;
+        // Note: this assumes that a build will never have more than 1000 artifacts (the limit of a
+        // single GetObjectsV2 response or DeleteObjects request). To handle over 1000 artifacts per
+        // build, it would be necessary to check .is_truncated() and send additional requests using
+        // continuation tokens.
+        let obj_keys: Vec<String> = resp
+            .contents
+            .unwrap_or_default()
+            .into_iter()
+            .map(|o| o.key.unwrap())
+            .collect();
+        if obj_keys.len() == 0 {
+            // DeleteObjects calls fail if made with an empty object array, so return early
+            return Ok(());
+        }
+        for key in &obj_keys {
+            debug!("Deleting object: {}", &key);
+        }
+        let delete_body = aws_sdk_s3::model::Delete::builder()
+            .set_objects(Some(
+                obj_keys
+                    .into_iter()
+                    .map(|k| {
+                        aws_sdk_s3::model::ObjectIdentifier::builder()
+                            .key(k)
+                            .build()
+                    })
+                    .collect(),
+            ))
+            .build();
+        s3_client
+            .delete_objects()
+            .bucket(&self.bucket)
+            .delete(delete_body)
+            .send()
+            .await?;
+        Ok(())
     }
 
     /// Invalidates the specified build's artifact directory path from the CloudFront distribution.
@@ -183,6 +242,15 @@ impl S3 {
         build: &str,
         cloudfront_client: &aws_sdk_cloudfront::Client,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    /// Retrieves a build's artifact directory checksum from the S3 bucket, if it exists.
+    async fn get_bucket_dir_checksum(
+        &self,
+        build: &str,
+        s3_client: &aws_sdk_s3::Client,
+    ) -> Option<Vec<u8>> {
         todo!()
     }
 

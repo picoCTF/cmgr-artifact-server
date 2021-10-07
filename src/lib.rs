@@ -113,7 +113,7 @@ fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
     Ok(hasher.finalize().as_slice().into())
 }
 
-const CHECKSUM_FILENAME: &str = ".__checksum";
+pub const CHECKSUM_FILENAME: &str = ".__checksum";
 
 /// Returns the tarball checksum stored inside a cache directory.
 fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
