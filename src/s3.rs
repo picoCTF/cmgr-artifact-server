@@ -253,7 +253,23 @@ impl S3 {
         build: &str,
         cloudfront_client: &aws_sdk_cloudfront::Client,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        todo!()
+        let path = format!("/{}{}*", self.path_prefix, build);
+        info!("Creating invalidation for path: {}", &path);
+        let paths = aws_sdk_cloudfront::model::Paths::builder()
+            .items(path)
+            .quantity(1)
+            .build();
+        let invalidation_batch = aws_sdk_cloudfront::model::InvalidationBatch::builder()
+            .paths(paths)
+            .caller_reference(chrono::Utc::now().to_string())
+            .build();
+        cloudfront_client
+            .create_invalidation()
+            .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
+            .invalidation_batch(invalidation_batch)
+            .send()
+            .await?;
+        Ok(())
     }
 
     /// Retrieves a build's artifact directory checksum from the S3 bucket, if it exists.
