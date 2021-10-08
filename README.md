@@ -70,7 +70,7 @@ $ cmgr build cmgr/examples/custom-socat 1
 # Potentially updates existing builds:
 $ cmgr update
 
-# In either case, any modified artifact files are synced to the configured cloud storage provider:
+# In either case, any modified artifact files are synced to S3:
 $ curl https://your-cloudfront-distribution.com/ctf-artifacts/4/file.c  # 200 OK
 ```
 
