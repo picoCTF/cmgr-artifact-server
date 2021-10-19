@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.0.1
+
+Includes dependency updates.
+
 ## v2.0.0
 
 `cmgr-artifact-server` is now a standalone binary supporting the same platforms as
