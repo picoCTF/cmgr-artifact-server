@@ -56,8 +56,8 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "aws-auth"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-types",
  "pin-project",
@@ -70,8 +70,8 @@ dependencies = [
 
 [[package]]
 name = "aws-config"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-http",
  "aws-hyper",
@@ -92,8 +92,8 @@ dependencies = [
 
 [[package]]
 name = "aws-endpoint"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-types",
  "http",
@@ -103,8 +103,8 @@ dependencies = [
 
 [[package]]
 name = "aws-http"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-types",
  "http",
@@ -116,8 +116,8 @@ dependencies = [
 
 [[package]]
 name = "aws-hyper"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-auth",
  "aws-endpoint",
@@ -141,8 +141,8 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-cloudfront"
-version = "0.0.19-alpha"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-auth",
  "aws-endpoint",
@@ -160,14 +160,15 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "0.0.19-alpha"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-auth",
  "aws-endpoint",
  "aws-http",
  "aws-hyper",
  "aws-sig-auth",
+ "aws-sigv4",
  "aws-types",
  "bytes",
  "http",
@@ -177,12 +178,13 @@ dependencies = [
  "smithy-http",
  "smithy-types",
  "smithy-xml",
+ "tower",
 ]
 
 [[package]]
 name = "aws-sdk-sts"
-version = "0.0.19-alpha"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "aws-auth",
  "aws-endpoint",
@@ -201,29 +203,28 @@ dependencies = [
 
 [[package]]
 name = "aws-sig-auth"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
- "aws-auth",
  "aws-sigv4",
  "aws-types",
  "http",
  "smithy-eventstream",
  "smithy-http",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
 name = "aws-sigv4"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "bytes",
  "chrono",
  "form_urlencoded",
  "hex",
  "http",
- "http-body",
  "percent-encoding",
  "ring",
  "smithy-eventstream",
@@ -232,12 +233,12 @@ dependencies = [
 
 [[package]]
 name = "aws-types"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.0.21-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "rustc_version",
  "smithy-async",
- "tracing",
+ "smithy-types",
  "zeroize",
 ]
 
@@ -1291,8 +1292,8 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "smithy-async"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "pin-project-lite",
  "tokio",
@@ -1300,8 +1301,8 @@ dependencies = [
 
 [[package]]
 name = "smithy-client"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "bytes",
  "fastrand",
@@ -1309,7 +1310,10 @@ dependencies = [
  "http-body",
  "hyper",
  "hyper-rustls",
+ "lazy_static",
  "pin-project",
+ "pin-project-lite",
+ "smithy-async",
  "smithy-http",
  "smithy-http-tower",
  "smithy-types",
@@ -1320,8 +1324,8 @@ dependencies = [
 
 [[package]]
 name = "smithy-eventstream"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1330,8 +1334,8 @@ dependencies = [
 
 [[package]]
 name = "smithy-http"
-version = "0.0.1"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -1351,8 +1355,8 @@ dependencies = [
 
 [[package]]
 name = "smithy-http-tower"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "bytes",
  "http",
@@ -1365,16 +1369,16 @@ dependencies = [
 
 [[package]]
 name = "smithy-json"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "smithy-types",
 ]
 
 [[package]]
 name = "smithy-query"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "smithy-types",
  "urlencoding",
@@ -1382,8 +1386,8 @@ dependencies = [
 
 [[package]]
 name = "smithy-types"
-version = "0.0.1"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "chrono",
  "itoa",
@@ -1393,8 +1397,8 @@ dependencies = [
 
 [[package]]
 name = "smithy-xml"
-version = "0.1.0"
-source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.19-alpha#74bae11ae1af170e33fb695488f1f514f21884ae"
+version = "0.26.0-alpha"
+source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.21-alpha#d02a7f0ddc19463ed645641d6758819247348873"
 dependencies = [
  "thiserror",
  "xmlparser",
