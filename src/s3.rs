@@ -9,6 +9,7 @@ use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Receiver;
 use walkdir::WalkDir;
 
@@ -156,7 +157,13 @@ impl S3 {
             let path = format!("/{}", &test_filename);
             let batch = InvalidationBatch::builder()
                 .paths(Paths::builder().items(path).quantity(1).build())
-                .caller_reference(chrono::Utc::now().to_string())
+                .caller_reference(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("System time went backwards")
+                        .as_millis()
+                        .to_string(),
+                )
                 .build();
             cf_client
                 .create_invalidation()
@@ -268,7 +275,13 @@ impl S3 {
             .build();
         let invalidation_batch = aws_sdk_cloudfront::model::InvalidationBatch::builder()
             .paths(paths)
-            .caller_reference(chrono::Utc::now().to_string())
+            .caller_reference(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("System time went backwards")
+                    .as_millis()
+                    .to_string(),
+            )
             .build();
         cloudfront_client
             .create_invalidation()
