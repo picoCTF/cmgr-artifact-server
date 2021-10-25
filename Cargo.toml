@@ -21,7 +21,7 @@ env_logger = "0.9.0"
 flate2 = "1.0.22"
 http = "0.2.5"
 hyper = { version = "0.14.13", features = ["full"] }
-hyper-staticfile = "0.7.0"
+hyper-staticfile = "0.8.0"
 log = "0.4.14"
 notify = "4.0.16"
 tar = "0.4.37"
