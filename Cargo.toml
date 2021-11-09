@@ -2,7 +2,7 @@
 name = "cmgr-artifact-server"
 description = "Server for cmgr challenge artifacts"
 version = "2.0.0"
-edition = "2018"
+edition = "2021"
 authors = ["picoCTF team <opensource@picoctf.org>"]
 repository = "https://github.com/picoCTF/cmgr-artifact-server"
 license = "MIT"
