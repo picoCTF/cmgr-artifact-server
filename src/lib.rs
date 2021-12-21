@@ -2,7 +2,7 @@ mod s3;
 mod selfhosted;
 
 use async_trait::async_trait;
-use blake2::{Blake2b, Digest};
+use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use log::{debug, info, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
@@ -101,7 +101,7 @@ pub trait Backend: Sized {
 
 /// Returns the checksum of an artifact tarball.
 fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
-    let mut hasher = Blake2b::new();
+    let mut hasher = Blake2b512::new();
     let mut tarball = fs::File::open(tarball)?;
     let mut buf = [0; 4096];
     loop {
