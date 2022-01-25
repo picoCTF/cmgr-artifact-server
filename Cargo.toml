@@ -12,7 +12,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.52"
-aws-config = "0.4.1"
+aws-config = "0.5.2"
 aws-sdk-cloudfront = "0.4.1"
 aws-sdk-s3 = "0.4.1"
 blake2 = "0.10.2"
