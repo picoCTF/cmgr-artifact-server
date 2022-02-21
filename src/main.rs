@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::{Command, Arg};
 use cmgr_artifact_server::{sync_cache, watch_dir, Backend, OptionParsingError, Selfhosted, S3};
 use log::{debug, info};
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ async fn main() {
 }
 
 async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = App::new(clap::crate_name!())
+    let matches = Command::new(clap::crate_name!())
     .version(clap::crate_version!())
     .author(clap::crate_authors!())
     .about(clap::crate_description!())
