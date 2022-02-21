@@ -14,7 +14,7 @@ publish = false
 async-trait = "0.1.52"
 aws-config = "0.6.0"
 aws-sdk-cloudfront = "0.6.0"
-aws-sdk-s3 = "0.6.0"
+aws-sdk-s3 = "0.7.0"
 blake2 = "0.10.2"
 clap = { version = "3.0.14", features = ["cargo"] }
 env_logger = "0.9.0"
