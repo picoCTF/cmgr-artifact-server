@@ -4,7 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use aws_sdk_cloudfront::model::{InvalidationBatch, Paths};
-use aws_sdk_s3::ByteStream;
+use aws_sdk_s3::types::ByteStream;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::fs;
