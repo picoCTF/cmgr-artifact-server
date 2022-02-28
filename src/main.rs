@@ -99,7 +99,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 fn parse_options(options: Vec<&str>) -> Result<HashMap<&str, &str>, OptionParsingError> {
     let mut map = HashMap::new();
     for option in options {
-        if let Some((key, value)) = option.split_once("=") {
+        if let Some((key, value)) = option.split_once('=') {
             map.insert(key, value);
         } else {
             return Err(OptionParsingError);
