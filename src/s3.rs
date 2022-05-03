@@ -196,7 +196,7 @@ impl S3 {
             upload_path.push(relative_path);
             debug!("Uploading object: {}", &upload_path.display());
             let file = tokio::fs::File::open(&entry.path()).await?;
-            let body = ByteStream::from_file(file).await?;
+            let body = ByteStream::read_from().file(file).build().await?;
             s3_client
                 .put_object()
                 .bucket(&self.bucket)
