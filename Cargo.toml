@@ -12,9 +12,9 @@ publish = false
 
 [dependencies]
 async-trait = "0.1.56"
-aws-config = "0.12.0"
-aws-sdk-cloudfront = "0.12.0"
-aws-sdk-s3 = "0.12.0"
+aws-config = "0.13.0"
+aws-sdk-cloudfront = "0.13.0"
+aws-sdk-s3 = "0.13.0"
 blake2 = "0.10.4"
 clap = { version = "3.1.18", features = ["cargo"] }
 env_logger = "0.9.0"
