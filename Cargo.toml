@@ -11,7 +11,7 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1.56"
+async-trait = "0.1.57"
 aws-config = "0.46.0"
 aws-sdk-cloudfront = "0.16.0"
 aws-sdk-s3 = "0.16.0"
