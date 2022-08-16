@@ -305,13 +305,13 @@ impl S3 {
             .key(&checksum_path)
             .send()
             .await;
-        return match resp {
+        match resp {
             Ok(get_object_output) => {
                 let data = get_object_output.body.collect().await?;
                 Ok(Some(data.into_bytes().to_vec()))
             }
             Err(_) => Ok(None),
-        };
+        }
     }
 
     /// Perform a full synchronization of the cache directory to the S3 bucket.
