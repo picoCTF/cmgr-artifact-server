@@ -89,7 +89,7 @@ impl Backend for S3 {
                     info!("Updating artifacts for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;
                     self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
-                    if (&cf_client).is_some() {
+                    if (cf_client).is_some() {
                         self.create_invalidation(&build, cf_client.as_ref().unwrap())
                             .await?;
                     }
@@ -97,7 +97,7 @@ impl Backend for S3 {
                 BuildEvent::Delete(build) => {
                     info!("Removing artifacts for build {}", &build);
                     self.delete_bucket_dir(&build, &s3_client).await?;
-                    if (&cf_client).is_some() {
+                    if (cf_client).is_some() {
                         self.create_invalidation(&build, cf_client.as_ref().unwrap())
                             .await?;
                     }
