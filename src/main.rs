@@ -1,4 +1,4 @@
-use clap::{Arg, Command, ArgAction};
+use clap::{Arg, ArgAction, Command};
 use cmgr_artifact_server::{sync_cache, watch_dir, Backend, OptionParsingError, Selfhosted, S3};
 use log::{debug, info};
 use std::collections::HashMap;
@@ -85,7 +85,12 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let rx = watch_dir(&artifact_dir, &cache_dir);
 
     // Start backend
-    match matches.get_one::<String>("backend").unwrap().to_lowercase().as_str() {
+    match matches
+        .get_one::<String>("backend")
+        .unwrap()
+        .to_lowercase()
+        .as_str()
+    {
         "selfhosted" => Selfhosted::new(options)?.run(&cache_dir, rx).await,
         "s3" => S3::new(options)?.run(&cache_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
