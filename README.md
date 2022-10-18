@@ -24,6 +24,12 @@ $ tar xzf cmgr-artifact-server_linux_amd64.tar.gz
 $ cp cmgr-artifact-server /usr/local/bin
 ```
 
+Alternatively, build and install from source:
+
+```bash
+$ cargo install --locked --path .
+```
+
 ## Backends
 
 ### `selfhosted` backend
