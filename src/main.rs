@@ -1,4 +1,4 @@
-use clap::{Arg, Command};
+use clap::{Arg, Command, ArgAction};
 use cmgr_artifact_server::{sync_cache, watch_dir, Backend, OptionParsingError, Selfhosted, S3};
 use log::{debug, info};
 use std::collections::HashMap;
@@ -28,8 +28,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .short('b')
         .long("backend")
         .help("File hosting backend")
-        .takes_value(true)
-        .possible_values(&["selfhosted", "s3"])
+        .value_parser(["selfhosted", "s3"])
         .ignore_case(true)
         .required(true)
     )
@@ -37,8 +36,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .short('l')
         .long("log-level")
         .help("Log level")
-        .takes_value(true)
-        .possible_values(&["error", "warn", "info", "debug", "trace"])
+        .value_parser(["error", "warn", "info", "debug", "trace"])
         .ignore_case(true)
         .default_value("info")
     )
@@ -46,8 +44,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .short('o')
         .long("backend-option")
         .help("Backend-specific option in key=value format.\nMay be specified multiple times.")
-        .takes_value(true)
-        .multiple_occurrences(true)
+        .action(ArgAction::Append)
         .number_of_values(1)
     )
     .get_matches();
@@ -56,13 +53,13 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
         .parse_filters(&format!(
             "cmgr_artifact_server={}",
-            matches.value_of("log-level").unwrap()
+            matches.get_one::<String>("log-level").unwrap()
         ))
         .init();
 
     // Collect supplied backend options
-    let options = if let Some(v) = matches.values_of("backend-option") {
-        v.collect::<Vec<&str>>()
+    let options = if let Some(v) = matches.get_many("backend-option") {
+        v.copied().collect::<Vec<&str>>()
     } else {
         vec![]
     };
@@ -88,7 +85,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let rx = watch_dir(&artifact_dir, &cache_dir);
 
     // Start backend
-    match matches.value_of("backend").unwrap().to_lowercase().as_str() {
+    match matches.get_one::<String>("backend").unwrap().to_lowercase().as_str() {
         "selfhosted" => Selfhosted::new(options)?.run(&cache_dir, rx).await,
         "s3" => S3::new(options)?.run(&cache_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
