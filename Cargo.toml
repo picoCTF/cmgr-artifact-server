@@ -20,7 +20,7 @@ clap = { version = "4.0.18", features = ["cargo"] }
 env_logger = "0.9.1"
 flate2 = "1.0.24"
 http = "0.2.8"
-hyper = { version = "0.14.20", features = ["full"] }
+hyper = { version = "0.14.22", features = ["full"] }
 hyper-staticfile = "0.9.1"
 log = "0.4.16"
 notify = "4.0.17"
