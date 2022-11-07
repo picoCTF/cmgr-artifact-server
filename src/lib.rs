@@ -170,7 +170,7 @@ fn to_filename_str(path: &Path) -> &str {
 pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::Error> {
     // Collect build IDs and paths of all existing artifact tarballs
     let mut tarballs: HashMap<String, PathBuf> = HashMap::new();
-    for dir_entry in fs::read_dir(&artifact_dir)? {
+    for dir_entry in fs::read_dir(artifact_dir)? {
         let path_buf = dir_entry?.path();
         let filename = to_filename_str(&path_buf);
         if filename.ends_with(".tar.gz") {
