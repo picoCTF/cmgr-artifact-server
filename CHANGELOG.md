@@ -1,8 +1,12 @@
 # Changelog
 
+## v2.0.2
+
+Dependency updates, including a [fix](https://github.com/stephank/hyper-staticfile/releases/tag/v0.9.2) for a malicious path traversal vulnerability on Windows hosts if using the `selfhosted` backend (RUSTSEC-2022-0069).
+
 ## v2.0.1
 
-Includes dependency updates.
+Dependency updates.
 
 ## v2.0.0
 
