@@ -10,7 +10,7 @@ use std::process;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run_app().await {
-        eprintln!("{}", e);
+        eprintln!("{e}");
         process::exit(1);
     }
 }

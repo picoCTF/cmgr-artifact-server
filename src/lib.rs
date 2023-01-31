@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
@@ -144,7 +144,7 @@ fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
     maybe_remove_dir(cache_dir)?;
     fs::create_dir_all(cache_dir)?;
     let mut tarball_file = fs::File::open(tarball)?;
-    tarball_file.seek(SeekFrom::Start(0))?;
+    tarball_file.rewind()?;
     let tar = GzDecoder::new(tarball_file);
     let mut archive = Archive::new(tar);
     archive.unpack(cache_dir)?;
@@ -292,7 +292,7 @@ pub fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> 
                             _ => (),
                         }
                     }
-                    Err(e) => panic!("File watcher error: {:?}", e),
+                    Err(e) => panic!("File watcher error: {e:?}"),
                 }
             }
         }
