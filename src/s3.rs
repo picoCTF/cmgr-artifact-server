@@ -30,7 +30,7 @@ impl Backend for S3 {
         &["bucket"]
     }
 
-    fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
+    fn new(options: HashMap<String, String>) -> Result<Self, BackendCreationError> {
         let bucket = match options.get("bucket") {
             Some(bucket_name) => bucket_name.to_string(),
             None => return Err(BackendCreationError),
@@ -38,7 +38,10 @@ impl Backend for S3 {
         // If non-empty, path prefixes must include a trailing slash, but not a leading slash.
         // A root path prefix ("/") must be replaced with an empty string to avoid duplicate leading
         // slashes when used in S3 object keys. Normalize the prefix:
-        let path_prefix = options.get("path-prefix").unwrap_or(&"").to_string();
+        let path_prefix = options
+            .get("path-prefix")
+            .unwrap_or(&String::from(""))
+            .to_string();
         let mut path_prefix = path_prefix.trim_start_matches('/').to_string();
         if !path_prefix.is_empty() && !path_prefix.ends_with('/') {
             path_prefix.push('/');

@@ -65,11 +65,11 @@ impl Backend for Selfhosted {
         &[]
     }
 
-    fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError> {
+    fn new(options: HashMap<String, String>) -> Result<Self, BackendCreationError> {
         let backend = Selfhosted {
             address: options
                 .get("address")
-                .unwrap_or(&"0.0.0.0:4201")
+                .unwrap_or(&String::from("0.0.0.0:4201"))
                 .to_string(),
         };
         debug!("Created backend: {:?}", backend);

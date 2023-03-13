@@ -70,7 +70,7 @@ pub trait Backend: Sized {
     fn get_required_options() -> &'static [&'static str];
 
     /// Create an instance of the backend if all required options are provided.
-    fn new(options: HashMap<&str, &str>) -> Result<Self, BackendCreationError>;
+    fn new(options: HashMap<String, String>) -> Result<Self, BackendCreationError>;
 
     /// Run the backend.
     ///

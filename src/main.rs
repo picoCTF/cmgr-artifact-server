@@ -58,8 +58,8 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Collect supplied backend options
-    let options = if let Some(v) = matches.get_many("backend-option") {
-        v.copied().collect::<Vec<&str>>()
+    let options: Vec<String> = if let Some(v) = matches.get_many::<String>("backend-option") {
+        v.cloned().collect()
     } else {
         vec![]
     };
@@ -98,11 +98,11 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_options(options: Vec<&str>) -> Result<HashMap<&str, &str>, OptionParsingError> {
+fn parse_options(options: Vec<String>) -> Result<HashMap<String, String>, OptionParsingError> {
     let mut map = HashMap::new();
     for option in options {
         if let Some((key, value)) = option.split_once('=') {
-            map.insert(key, value);
+            map.insert(key.into(), value.into());
         } else {
             return Err(OptionParsingError);
         }

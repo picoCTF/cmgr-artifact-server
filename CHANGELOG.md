@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.0.3
+
+Fixed panic when called with one or more `--backend-option` values.
+
 ## v2.0.2
 
 Dependency updates, including a [fix](https://github.com/stephank/hyper-staticfile/releases/tag/v0.9.2) for a malicious path traversal vulnerability on Windows hosts if using the `selfhosted` backend (RUSTSEC-2022-0069).
