@@ -23,7 +23,7 @@ http = "0.2.9"
 hyper = { version = "0.14.25", features = ["full"] }
 hyper-staticfile = "0.9.5"
 log = "0.4.16"
-notify = "4.0.17"
+notify = "5.1.0"
 tar = "0.4.38"
 tokio = { version = "1.27.0", features = ["full"] }
 walkdir = "2.3.3"
