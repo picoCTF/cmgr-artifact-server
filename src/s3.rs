@@ -3,8 +3,8 @@ use crate::{
     CHECKSUM_FILENAME,
 };
 use async_trait::async_trait;
-use aws_sdk_cloudfront::model::{InvalidationBatch, Paths};
-use aws_sdk_s3::types::ByteStream;
+use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
+use aws_sdk_s3::primitives::ByteStream;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -243,12 +243,12 @@ impl S3 {
         for key in &obj_keys {
             debug!("Deleting object: {}", &key);
         }
-        let delete_body = aws_sdk_s3::model::Delete::builder()
+        let delete_body = aws_sdk_s3::types::Delete::builder()
             .set_objects(Some(
                 obj_keys
                     .into_iter()
                     .map(|k| {
-                        aws_sdk_s3::model::ObjectIdentifier::builder()
+                        aws_sdk_s3::types::ObjectIdentifier::builder()
                             .key(k)
                             .build()
                     })
@@ -272,11 +272,11 @@ impl S3 {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let path = format!("/{}{}*", self.path_prefix, build);
         debug!("Creating invalidation for path: {}", &path);
-        let paths = aws_sdk_cloudfront::model::Paths::builder()
+        let paths = aws_sdk_cloudfront::types::Paths::builder()
             .items(path)
             .quantity(1)
             .build();
-        let invalidation_batch = aws_sdk_cloudfront::model::InvalidationBatch::builder()
+        let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
             .paths(paths)
             .caller_reference(
                 SystemTime::now()
