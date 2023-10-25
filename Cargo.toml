@@ -11,19 +11,19 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1.68"
+async-trait = "0.1.74"
 aws-config = "0.56.1"
-aws-sdk-cloudfront = "0.31.1"
-aws-sdk-s3 = "0.31.2"
+aws-sdk-cloudfront = "0.33.0"
+aws-sdk-s3 = "0.33.0"
 blake2 = "0.10.6"
-clap = { version = "4.4.6", features = ["cargo"] }
+clap = { version = "4.4.7", features = ["cargo"] }
 env_logger = "0.10.0"
-flate2 = "1.0.26"
+flate2 = "1.0.28"
 http = "0.2.9"
-hyper = { version = "0.14.26", features = ["full"] }
+hyper = { version = "0.14.27", features = ["full"] }
 hyper-staticfile = "0.9.5"
-log = "0.4.17"
+log = "0.4.20"
 notify = "4.0.17"
 tar = "0.4.40"
-tokio = { version = "1.29.1", features = ["full"] }
+tokio = { version = "1.33.0", features = ["full"] }
 walkdir = "2.4.0"
