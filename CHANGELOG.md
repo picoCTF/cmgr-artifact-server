@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+## v2.0.4
+
+Dependency updates.
+Relicensed to MIT OR Apache-2.0.
+
 ## v2.0.3
 
 Fixed panic when called with one or more `--backend-option` values.
