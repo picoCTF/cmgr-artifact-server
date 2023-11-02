@@ -6,6 +6,10 @@ updates:
       interval: "monthly"
     labels:
       - "dependencies"
+    groups:
+      aws-sdk:
+        patterns:
+          - "aws-*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
