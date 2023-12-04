@@ -3,6 +3,7 @@ use crate::{
     CHECKSUM_FILENAME,
 };
 use async_trait::async_trait;
+use aws_config::BehaviorVersion;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
 use log::{debug, info};
@@ -64,7 +65,9 @@ impl Backend for S3 {
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Create S3 and CloudFront clients
-        let shared_config = aws_config::from_env().load().await;
+        let shared_config = aws_config::defaults(BehaviorVersion::v2023_11_09())
+            .load()
+            .await;
         let s3_client = aws_sdk_s3::Client::new(&shared_config);
         let cf_client = self
             .cloudfront_distribution
@@ -159,7 +162,7 @@ impl S3 {
             debug!("Testing CreateInvalidation");
             let path = format!("/{}", &test_filename);
             let batch = InvalidationBatch::builder()
-                .paths(Paths::builder().items(path).quantity(1).build())
+                .paths(Paths::builder().items(path).quantity(1).build()?)
                 .caller_reference(
                     SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -167,7 +170,7 @@ impl S3 {
                         .as_millis()
                         .to_string(),
                 )
-                .build();
+                .build()?;
             cf_client
                 .create_invalidation()
                 .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
@@ -252,9 +255,9 @@ impl S3 {
                             .key(k)
                             .build()
                     })
-                    .collect(),
+                    .collect::<Result<Vec<_>, _>>()?,
             ))
-            .build();
+            .build()?;
         s3_client
             .delete_objects()
             .bucket(&self.bucket)
@@ -275,7 +278,7 @@ impl S3 {
         let paths = aws_sdk_cloudfront::types::Paths::builder()
             .items(path)
             .quantity(1)
-            .build();
+            .build()?;
         let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
             .paths(paths)
             .caller_reference(
@@ -285,7 +288,7 @@ impl S3 {
                     .as_millis()
                     .to_string(),
             )
-            .build();
+            .build()?;
         cloudfront_client
             .create_invalidation()
             .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
@@ -353,7 +356,7 @@ impl S3 {
                     .to_string()
             }));
         }
-        while resp.is_truncated {
+        while resp.is_truncated.is_some_and(|t| t) {
             resp = s3_client
                 .list_objects_v2()
                 .bucket(&self.bucket)
