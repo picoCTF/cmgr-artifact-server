@@ -22,7 +22,7 @@ blake2 = "0.10.6"
 clap = { version = "4.4.10", features = ["cargo"] }
 env_logger = "0.10.0"
 flate2 = "1.0.28"
-http = "0.2.9"
+http = "1.0.0"
 hyper = { version = "0.14.27", features = ["full"] }
 hyper-staticfile = "0.9.5"
 log = "0.4.20"
