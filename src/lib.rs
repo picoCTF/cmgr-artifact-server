@@ -1,7 +1,6 @@
 mod s3;
 mod selfhosted;
 
-use async_trait::async_trait;
 use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use log::{debug, info, trace};
@@ -12,6 +11,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::fs;
+use std::future::Future;
 use std::io::{Read, Seek};
 use std::path::Path;
 use std::path::PathBuf;
@@ -58,7 +58,6 @@ pub enum BuildEvent {
     Delete(String),
 }
 
-#[async_trait]
 pub trait Backend: Sized {
     // TODO: currently the get_options() methods are not actually called anywhere. It would be nice
     // if they were used in the CLI help output or BackendCreationErrors.
@@ -92,11 +91,11 @@ pub trait Backend: Sized {
     ///
     /// As there is the potential for race conditions when handling build events, backends must
     /// process any events with the same build ID serially in the order of their arrival.
-    async fn run(
+    fn run(
         &self,
         cache_dir: &Path,
-        mut rx: Receiver<BuildEvent>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+        rx: Receiver<BuildEvent>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
 }
 
 /// Returns the checksum of an artifact tarball.

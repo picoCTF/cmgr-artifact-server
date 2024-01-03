@@ -1,5 +1,4 @@
 use crate::{Backend, BackendCreationError, BuildEvent};
-use async_trait::async_trait;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_staticfile::{Body, Static};
@@ -56,7 +55,6 @@ async fn handle_request<B>(
     Ok(res)
 }
 
-#[async_trait]
 impl Backend for Selfhosted {
     fn get_options() -> &'static [&'static str] {
         &["address"]

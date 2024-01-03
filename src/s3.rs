@@ -2,7 +2,6 @@ use crate::{
     get_cache_dir_checksum, to_filename_str, Backend, BackendCreationError, BuildEvent,
     CHECKSUM_FILENAME,
 };
-use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
@@ -21,7 +20,6 @@ pub struct S3 {
     cloudfront_distribution: Option<String>,
 }
 
-#[async_trait]
 impl Backend for S3 {
     fn get_options() -> &'static [&'static str] {
         &["bucket", "path-prefix", "cloudfront-distribution"]
