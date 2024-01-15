@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v2.0.5
+
+Fixed CI issue preventing the creation of release tarballs.
+
 ## v2.0.4
 
 Dependency updates.
