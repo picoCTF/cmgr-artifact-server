@@ -29,4 +29,4 @@ log = "0.4.20"
 notify = "4.0.17"
 tar = "0.4.40"
 tokio = { version = "1.36.0", features = ["full"] }
-walkdir = "2.4.0"
+walkdir = "2.5.0"
