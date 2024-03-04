@@ -5,17 +5,9 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 
 #[tokio::main]
-async fn main() {
-    if let Err(e) = run_app().await {
-        eprintln!("{e}");
-        process::exit(1);
-    }
-}
-
-async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Command::new(clap::crate_name!())
     .version(clap::crate_version!())
     .author(clap::crate_authors!())
