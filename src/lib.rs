@@ -106,10 +106,10 @@ fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
     loop {
         // Avoid reading all of tarball into memory at once
         match tarball.read(&mut buf) {
-            Ok(n) if n > 0 => {
+            Ok(n @ 1..) => {
                 hasher.update(&buf[..n]);
             }
-            Ok(_) => break,
+            Ok(0) => break,
             Err(e) => return Err(e),
         }
     }
