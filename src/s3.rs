@@ -63,7 +63,7 @@ impl Backend for S3 {
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Create S3 and CloudFront clients
-        let shared_config = aws_config::defaults(BehaviorVersion::v2023_11_09())
+        let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
             .load()
             .await;
         let s3_client = aws_sdk_s3::Client::new(&shared_config);
