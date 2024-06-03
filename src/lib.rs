@@ -211,7 +211,7 @@ pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::
 
     // Remove any cache dirs without a matching tarball
     for (build_id, cache_dir) in &cache_dirs {
-        if tarballs.get(build_id).is_none() {
+        if !tarballs.contains_key(build_id) {
             debug!("No tarball found for build {}, removing cache", build_id);
             maybe_remove_dir(cache_dir)?;
         }
