@@ -15,8 +15,8 @@ publish = false
 
 [dependencies]
 aws-config = "1.1.7"
-aws-sdk-cloudfront = "1.15.0"
-aws-sdk-s3 = "1.17.0"
+aws-sdk-cloudfront = "1.43.0"
+aws-sdk-s3 = "1.48.0"
 blake2 = "0.10.6"
 clap = { version = "4.5.19", features = ["cargo"] }
 env_logger = "0.11.5"
