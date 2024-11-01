@@ -24,7 +24,7 @@ flate2 = "1.0.34"
 http = "1.1.0"
 hyper = { version = "1.4.1", features = ["http1", "server"] }
 hyper-staticfile = "0.10.1"
-hyper-util = { version = "0.1.7", features = ["tokio"] }
+hyper-util = { version = "0.1.10", features = ["tokio"] }
 log = "0.4.22"
 notify = "4.0.17"
 tar = "0.4.42"
