@@ -20,7 +20,7 @@ aws-sdk-s3 = "1.48.0"
 blake2 = "0.10.6"
 clap = { version = "4.5.20", features = ["cargo"] }
 env_logger = "0.11.5"
-flate2 = "1.0.34"
+flate2 = "1.0.35"
 http = "1.1.0"
 hyper = { version = "1.5.0", features = ["http1", "server"] }
 hyper-staticfile = "0.10.1"
