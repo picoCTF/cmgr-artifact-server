@@ -22,7 +22,7 @@ clap = { version = "4.5.23", features = ["cargo"] }
 env_logger = "0.11.6"
 flate2 = "1.0.35"
 http = "1.2.0"
-hyper = { version = "1.5.1", features = ["http1", "server"] }
+hyper = { version = "1.5.2", features = ["http1", "server"] }
 hyper-staticfile = "0.10.1"
 hyper-util = { version = "0.1.10", features = ["tokio"] }
 log = "0.4.22"
