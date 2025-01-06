@@ -75,7 +75,7 @@ fn to_filename_str(path: &Path) -> &str {
 ///
 /// Any new or modified (based on a computed checksum) artifact tarballs will be extracted to the
 /// cache. Any cache subdirectories no longer corresponding to an artifact tarball will be deleted.
-pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::Error> {
+pub(crate) fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::Error> {
     // Collect build IDs and paths of all existing artifact tarballs
     let mut tarballs: HashMap<String, PathBuf> = HashMap::new();
     for dir_entry in fs::read_dir(artifact_dir)? {
@@ -132,7 +132,7 @@ pub fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::
 ///
 /// If an artifact tarball is modified or deleted, its corresponding cache subdirectory is recreated
 /// or deleted before sending a BuildEvent on the returned channel.
-pub fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> {
+pub(crate) fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> {
     let (tx, rx) = channel(32);
     thread::spawn({
         let artifact_dir = PathBuf::from(artifact_dir);

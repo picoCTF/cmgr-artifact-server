@@ -9,7 +9,7 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::BuildEvent;
 
-pub trait Backend: Sized {
+pub(crate) trait Backend: Sized {
     /// Create an instance of the backend if all required options are provided.
     async fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error>;
 
