@@ -1,17 +1,11 @@
-mod s3;
-mod selfhosted;
-
 use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use log::{debug, info, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
-pub use s3::S3;
-pub use selfhosted::Selfhosted;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::fs;
-use std::future::Future;
 use std::io::{Read, Seek};
 use std::path::Path;
 use std::path::PathBuf;
@@ -35,20 +29,6 @@ impl Display for OptionParsingError {
     }
 }
 
-#[derive(Debug)]
-pub struct BackendCreationError;
-
-impl Error for BackendCreationError {}
-
-impl Display for BackendCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Unable to initialize backend. Some required options were not provided."
-        )
-    }
-}
-
 /// Represents detected changes to artifact tarballs.
 /// The included string is the build ID.
 #[derive(Debug)]
@@ -56,46 +36,6 @@ pub enum BuildEvent {
     Create(String),
     Update(String),
     Delete(String),
-}
-
-pub trait Backend: Sized {
-    // TODO: currently the get_options() methods are not actually called anywhere. It would be nice
-    // if they were used in the CLI help output or BackendCreationErrors.
-
-    /// Return a list of option keys supported by this backend.
-    fn get_options() -> &'static [&'static str];
-
-    /// Return a list of option keys required by this backend.
-    fn get_required_options() -> &'static [&'static str];
-
-    /// Create an instance of the backend if all required options are provided.
-    fn new(options: HashMap<String, String>) -> Result<Self, BackendCreationError>;
-
-    /// Run the backend.
-    ///
-    /// The backend is not provided with the artifact directory (i.e. CMGR_ARTIFACT_DIR) itself, but
-    /// rather with a cache directory containing extracted artifact tarballs as subdirectories named
-    /// with the associated build ID. This cache directory is automatically kept up to date by a
-    /// background thread when the server is run as a binary.
-    ///
-    /// When a backend runs, it should first perform any synchronization necessary in order to
-    /// reflect the current contents of the cache directory. For example, if the backend syncs files
-    /// to remote storage, any directories without matching .__checksum files should be re-uploaded,
-    /// and any remote directories which no longer exist in the cache should be removed.
-    ///
-    /// After completing this initial synchronization, the backend should listen on the provided
-    /// channel for build events and take action accordingly. These events are produced when a build
-    /// with artifacts is (re-)created (BuildEvent::Update) or deleted (BuildEvent::Delete), and
-    /// contain the ID of the build. For example, a build's artifacts might be re-uploaded when an
-    /// Update event occurs, or deleted from remote storage when a Delete event occurs.
-    ///
-    /// As there is the potential for race conditions when handling build events, backends must
-    /// process any events with the same build ID serially in the order of their arrival.
-    fn run(
-        &self,
-        cache_dir: &Path,
-        rx: Receiver<BuildEvent>,
-    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
 }
 
 /// Returns the checksum of an artifact tarball.
@@ -119,7 +59,7 @@ fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
 pub const CHECKSUM_FILENAME: &str = ".__checksum";
 
 /// Returns the tarball checksum stored inside a cache directory.
-fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
+pub(crate) fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
     let mut checksum_path = PathBuf::from(cache_dir);
     checksum_path.push(CHECKSUM_FILENAME);
     fs::read(checksum_path)
@@ -155,7 +95,7 @@ fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
 
 /// Converts a PathBuf to a filename string slice.
 /// Panics if the conversion fails.
-fn to_filename_str(path: &Path) -> &str {
+pub(crate) fn to_filename_str(path: &Path) -> &str {
     path.file_name()
         .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path))
         .to_str()

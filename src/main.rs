@@ -1,10 +1,14 @@
+mod backend;
+mod watcher;
+
+use backend::{Backend, S3Backend, SelfhostedBackend};
 use clap::{Arg, ArgAction, Command};
-use cmgr_artifact_server::{sync_cache, watch_dir, Backend, OptionParsingError, Selfhosted, S3};
 use log::{debug, info};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use watcher::{sync_cache, watch_dir, OptionParsingError};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -83,8 +87,8 @@ async fn main() -> Result<(), anyhow::Error> {
         .to_lowercase()
         .as_str()
     {
-        "selfhosted" => Selfhosted::new(options)?.run(&cache_dir, rx).await,
-        "s3" => S3::new(options)?.run(&cache_dir, rx).await,
+        "selfhosted" => SelfhostedBackend::new(options)?.run(&cache_dir, rx).await,
+        "s3" => S3Backend::new(options)?.run(&cache_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())

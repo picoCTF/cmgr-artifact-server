@@ -1,4 +1,5 @@
-use crate::{Backend, BackendCreationError, BuildEvent};
+use crate::backend::Backend;
+use crate::watcher::BuildEvent;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_staticfile::{Body, Static};
@@ -6,7 +7,6 @@ use hyper_util::rt::TokioIo;
 use log::{debug, info};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::error::Error;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -14,7 +14,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::Receiver;
 
 #[derive(Debug)]
-pub struct Selfhosted {
+pub struct SelfhostedBackend {
     address: String,
 }
 
@@ -55,17 +55,9 @@ async fn handle_request<B>(
     Ok(res)
 }
 
-impl Backend for Selfhosted {
-    fn get_options() -> &'static [&'static str] {
-        &["address"]
-    }
-
-    fn get_required_options() -> &'static [&'static str] {
-        &[]
-    }
-
-    fn new(options: HashMap<String, String>) -> Result<Self, BackendCreationError> {
-        let backend = Selfhosted {
+impl Backend for SelfhostedBackend {
+    fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
+        let backend = SelfhostedBackend {
             address: options
                 .get("address")
                 .unwrap_or(&String::from("0.0.0.0:4201"))

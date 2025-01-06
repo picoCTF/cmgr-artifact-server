@@ -1,7 +1,5 @@
-use crate::{
-    get_cache_dir_checksum, to_filename_str, Backend, BackendCreationError, BuildEvent,
-    CHECKSUM_FILENAME,
-};
+use crate::backend::Backend;
+use crate::watcher::{get_cache_dir_checksum, to_filename_str, BuildEvent, CHECKSUM_FILENAME};
 use aws_config::BehaviorVersion;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
@@ -14,25 +12,17 @@ use tokio::sync::mpsc::Receiver;
 use walkdir::WalkDir;
 
 #[derive(Debug)]
-pub struct S3 {
+pub struct S3Backend {
     bucket: String,
     path_prefix: String,
     cloudfront_distribution: Option<String>,
 }
 
-impl Backend for S3 {
-    fn get_options() -> &'static [&'static str] {
-        &["bucket", "path-prefix", "cloudfront-distribution"]
-    }
-
-    fn get_required_options() -> &'static [&'static str] {
-        &["bucket"]
-    }
-
-    fn new(options: HashMap<String, String>) -> Result<Self, BackendCreationError> {
+impl Backend for S3Backend {
+    fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
         let bucket = match options.get("bucket") {
             Some(bucket_name) => bucket_name.to_string(),
-            None => return Err(BackendCreationError),
+            None => anyhow::bail!("required backend option \"bucket\" not provided"),
         };
         // If non-empty, path prefixes must include a trailing slash, but not a leading slash.
         // A root path prefix ("/") must be replaced with an empty string to avoid duplicate leading
@@ -112,7 +102,7 @@ impl Backend for S3 {
     }
 }
 
-impl S3 {
+impl S3Backend {
     /// Test that the current IAM user has all necessary permissions.
     async fn test_permissions(
         &self,
