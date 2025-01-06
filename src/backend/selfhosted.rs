@@ -56,7 +56,7 @@ async fn handle_request<B>(
 }
 
 impl Backend for SelfhostedBackend {
-    fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
+    async fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
         let backend = SelfhostedBackend {
             address: options
                 .get("address")

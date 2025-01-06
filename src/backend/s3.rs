@@ -19,7 +19,7 @@ pub struct S3Backend {
 }
 
 impl Backend for S3Backend {
-    fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
+    async fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
         let bucket = match options.get("bucket") {
             Some(bucket_name) => bucket_name.to_string(),
             None => anyhow::bail!("required backend option \"bucket\" not provided"),

@@ -96,12 +96,18 @@ if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
         .as_str()
     {
         "selfhosted" => {
-SelfhostedBackend::new(backend_options)?
+SelfhostedBackend::new(backend_options)
+                .await?
+                .run(&cache_dir, rx)
+                .await
+        }
+        "s3" => {
+            S3Backend::new(backend_options)
+                .await?
 .run(&cache_dir, rx)
 .await
         }
-        "s3" => S3Backend::new(backend_options)?.run(&cache_dir, rx).await,
-        _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
+                _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())
 }
