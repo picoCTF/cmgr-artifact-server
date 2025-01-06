@@ -12,10 +12,12 @@ use tokio::sync::mpsc::Receiver;
 use walkdir::WalkDir;
 
 #[derive(Debug)]
-pub struct S3Backend {
+pub(crate) struct S3Backend {
     bucket: String,
     path_prefix: String,
     cloudfront_distribution: Option<String>,
+    s3_client: aws_sdk_s3::Client,
+    cloudfront_client: Option<aws_sdk_cloudfront::Client>,
 }
 
 impl Backend for S3Backend {
@@ -37,12 +39,23 @@ impl Backend for S3Backend {
         }
         debug!("Normalized path prefix: \"{}\"", path_prefix);
 
+        // Create S3 and CloudFront clients
+        let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
+            .load()
+            .await;
+        let s3_client = aws_sdk_s3::Client::new(&shared_config);
+        let cloudfront_client = options
+            .get("cloudfront-distribution")
+            .map(|_| aws_sdk_cloudfront::Client::new(&shared_config));
+
         let backend = Self {
             bucket,
             path_prefix,
             cloudfront_distribution: options
                 .get("cloudfront-distribution")
                 .map(|v| v.to_string()),
+            s3_client,
+            cloudfront_client,
         };
         Ok(backend)
     }
@@ -52,25 +65,14 @@ impl Backend for S3Backend {
         cache_dir: &Path,
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
-        // TODO: stash in backend struct
-        // Create S3 and CloudFront clients
-        let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
-            .load()
-            .await;
-        let s3_client = aws_sdk_s3::Client::new(&shared_config);
-        let cf_client = self
-            .cloudfront_distribution
-            .as_ref()
-            .map(|_| aws_sdk_cloudfront::Client::new(&shared_config));
-
         // Check that we have sufficient IAM permissions. Better to do this up-front than to
         // unexpectedly fail at runtime.
         info!("Checking IAM permissions");
-        self.test_permissions(&s3_client, &cf_client).await?;
+        self.test_permissions().await?;
 
         // Sync existing artifacts
         info!("Syncing current artifact cache to S3");
-        self.synchronize(cache_dir, &s3_client, &cf_client).await?;
+        self.synchronize(cache_dir).await?;
 
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
@@ -78,23 +80,21 @@ impl Backend for S3Backend {
             match event {
                 BuildEvent::Create(build) => {
                     info!("Uploading artifacts for build {}", &build);
-                    self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
+                    self.upload_cache_dir(cache_dir, &build).await?;
                 }
                 BuildEvent::Update(build) => {
                     info!("Updating artifacts for build {}", &build);
-                    self.delete_bucket_dir(&build, &s3_client).await?;
-                    self.upload_cache_dir(cache_dir, &build, &s3_client).await?;
-                    if (cf_client).is_some() {
-                        self.create_invalidation(&build, cf_client.as_ref().unwrap())
-                            .await?;
+                    self.delete_bucket_dir(&build).await?;
+                    self.upload_cache_dir(cache_dir, &build).await?;
+                    if (self.cloudfront_client).is_some() {
+                        self.create_invalidation(&build).await?;
                     }
                 }
                 BuildEvent::Delete(build) => {
                     info!("Removing artifacts for build {}", &build);
-                    self.delete_bucket_dir(&build, &s3_client).await?;
-                    if (cf_client).is_some() {
-                        self.create_invalidation(&build, cf_client.as_ref().unwrap())
-                            .await?;
+                    self.delete_bucket_dir(&build).await?;
+                    if (self.cloudfront_client).is_some() {
+                        self.create_invalidation(&build).await?;
                     }
                 }
             }
@@ -105,13 +105,9 @@ impl Backend for S3Backend {
 
 impl S3Backend {
     /// Test that the current IAM user has all necessary permissions.
-    async fn test_permissions(
-        &self,
-        s3_client: &aws_sdk_s3::Client,
-        cloudfront_client: &Option<aws_sdk_cloudfront::Client>,
-    ) -> Result<(), anyhow::Error> {
+    async fn test_permissions(&self) -> Result<(), anyhow::Error> {
         debug!("Testing ListObjectsV2");
-        s3_client
+        self.s3_client
             .list_objects_v2()
             .bucket(&self.bucket)
             .send()
@@ -121,7 +117,7 @@ impl S3Backend {
         const TEST_BODY: &[u8] = "test contents".as_bytes();
         let body = ByteStream::from_static(TEST_BODY);
         let test_filename = format!("{}{}", &self.path_prefix, "iam_test");
-        s3_client
+        self.s3_client
             .put_object()
             .bucket(&self.bucket)
             .key(&test_filename)
@@ -130,7 +126,8 @@ impl S3Backend {
             .await?;
 
         debug!("Testing GetObject");
-        let resp = s3_client
+        let resp = self
+            .s3_client
             .get_object()
             .bucket(&self.bucket)
             .key(&test_filename)
@@ -140,14 +137,14 @@ impl S3Backend {
         assert_eq!(TEST_BODY, data.unwrap().into_bytes());
 
         debug!("Testing DeleteObject");
-        s3_client
+        self.s3_client
             .delete_object()
             .bucket(&self.bucket)
             .key(&test_filename)
             .send()
             .await?;
 
-        if let Some(cf_client) = cloudfront_client {
+        if let Some(cloudfront_client) = self.cloudfront_client.as_ref() {
             debug!("Testing CreateInvalidation");
             let path = format!("/{}", &test_filename);
             let batch = InvalidationBatch::builder()
@@ -160,7 +157,7 @@ impl S3Backend {
                         .to_string(),
                 )
                 .build()?;
-            cf_client
+            cloudfront_client
                 .create_invalidation()
                 .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
                 .invalidation_batch(batch)
@@ -172,12 +169,7 @@ impl S3Backend {
     }
 
     /// Uploads the specified build's cache directory to the S3 bucket.
-    async fn upload_cache_dir(
-        &self,
-        cache_dir: &Path,
-        build: &str,
-        s3_client: &aws_sdk_s3::Client,
-    ) -> Result<(), anyhow::Error> {
+    async fn upload_cache_dir(&self, cache_dir: &Path, build: &str) -> Result<(), anyhow::Error> {
         let mut build_cache_dir = PathBuf::from(cache_dir);
         build_cache_dir.push(build);
         for entry in WalkDir::new(&build_cache_dir).min_depth(1) {
@@ -192,7 +184,7 @@ impl S3Backend {
             debug!("Uploading object: {}", &upload_path.display());
             let file = tokio::fs::File::open(&entry.path()).await?;
             let body = ByteStream::read_from().file(file).build().await?;
-            s3_client
+            self.s3_client
                 .put_object()
                 .bucket(&self.bucket)
                 .key(upload_path.to_str().unwrap_or_else(|| {
@@ -206,13 +198,10 @@ impl S3Backend {
     }
 
     /// Deletes the specified build's artifact directory from the S3 bucket.
-    async fn delete_bucket_dir(
-        &self,
-        build: &str,
-        s3_client: &aws_sdk_s3::Client,
-    ) -> Result<(), anyhow::Error> {
+    async fn delete_bucket_dir(&self, build: &str) -> Result<(), anyhow::Error> {
         let prefix = format!("{}{}/", self.path_prefix, build);
-        let resp = s3_client
+        let resp = self
+            .s3_client
             .list_objects_v2()
             .bucket(&self.bucket)
             .prefix(prefix)
@@ -247,7 +236,7 @@ impl S3Backend {
                     .collect::<Result<Vec<_>, _>>()?,
             ))
             .build()?;
-        s3_client
+        self.s3_client
             .delete_objects()
             .bucket(&self.bucket)
             .delete(delete_body)
@@ -256,45 +245,41 @@ impl S3Backend {
         Ok(())
     }
 
-    /// Invalidates the specified build's artifact directory path from the CloudFront distribution.
-    async fn create_invalidation(
-        &self,
-        build: &str,
-        cloudfront_client: &aws_sdk_cloudfront::Client,
-    ) -> Result<(), anyhow::Error> {
-        let path = format!("/{}{}*", self.path_prefix, build);
-        debug!("Creating invalidation for path: {}", &path);
-        let paths = aws_sdk_cloudfront::types::Paths::builder()
-            .items(path)
-            .quantity(1)
-            .build()?;
-        let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
-            .paths(paths)
-            .caller_reference(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("System time went backwards")
-                    .as_millis()
-                    .to_string(),
-            )
-            .build()?;
-        cloudfront_client
-            .create_invalidation()
-            .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
-            .invalidation_batch(invalidation_batch)
-            .send()
-            .await?;
+    /// Invalidates the specified build's artifact directory path from the CloudFront distribution,
+    /// if one is configured. If no distribution is configured, does nothing.
+    async fn create_invalidation(&self, build: &str) -> Result<(), anyhow::Error> {
+        if let Some(cloudfront_client) = self.cloudfront_client.as_ref() {
+            let path = format!("/{}{}*", self.path_prefix, build);
+            debug!("Creating invalidation for path: {}", &path);
+            let paths = aws_sdk_cloudfront::types::Paths::builder()
+                .items(path)
+                .quantity(1)
+                .build()?;
+            let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
+                .paths(paths)
+                .caller_reference(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("System time went backwards")
+                        .as_millis()
+                        .to_string(),
+                )
+                .build()?;
+            cloudfront_client
+                .create_invalidation()
+                .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
+                .invalidation_batch(invalidation_batch)
+                .send()
+                .await?;
+        }
         Ok(())
     }
 
     /// Retrieves a build's artifact directory checksum from the S3 bucket, if it exists.
-    async fn get_bucket_dir_checksum(
-        &self,
-        build: &str,
-        s3_client: &aws_sdk_s3::Client,
-    ) -> Result<Option<Vec<u8>>, anyhow::Error> {
+    async fn get_bucket_dir_checksum(&self, build: &str) -> Result<Option<Vec<u8>>, anyhow::Error> {
         let checksum_path = format!("{}{}/{}", &self.path_prefix, build, CHECKSUM_FILENAME);
-        let resp = s3_client
+        let resp = self
+            .s3_client
             .get_object()
             .bucket(&self.bucket)
             .key(&checksum_path)
@@ -310,12 +295,7 @@ impl S3Backend {
     }
 
     /// Perform a full synchronization of the cache directory to the S3 bucket.
-    async fn synchronize(
-        &self,
-        cache_dir: &Path,
-        s3_client: &aws_sdk_s3::Client,
-        cloudfront_client: &Option<aws_sdk_cloudfront::Client>,
-    ) -> Result<(), anyhow::Error> {
+    async fn synchronize(&self, cache_dir: &Path) -> Result<(), anyhow::Error> {
         // Get build IDs and paths of all local cache directories
         let mut cache_dirs: HashMap<String, PathBuf> = HashMap::new();
         for dir_entry in fs::read_dir(cache_dir)? {
@@ -332,7 +312,8 @@ impl S3Backend {
 
         // Get all build IDs with directories in bucket
         let mut bucket_build_ids: HashSet<String> = HashSet::new();
-        let mut resp = s3_client
+        let mut resp = self
+            .s3_client
             .list_objects_v2()
             .bucket(&self.bucket)
             .prefix(&self.path_prefix)
@@ -350,7 +331,8 @@ impl S3Backend {
             }));
         }
         while resp.is_truncated.is_some_and(|t| t) {
-            resp = s3_client
+            resp = self
+                .s3_client
                 .list_objects_v2()
                 .bucket(&self.bucket)
                 .prefix(&self.path_prefix)
@@ -373,7 +355,7 @@ impl S3Backend {
         // Ensure that all bucket directories are up to date
         for (build_id, build_cache_dir) in &cache_dirs {
             if bucket_build_ids.contains(build_id) {
-                let bucket_checksum = self.get_bucket_dir_checksum(build_id, s3_client).await?;
+                let bucket_checksum = self.get_bucket_dir_checksum(build_id).await?;
                 if let Some(bucket_checksum) = bucket_checksum {
                     if bucket_checksum == get_cache_dir_checksum(build_cache_dir)? {
                         continue;
@@ -383,20 +365,15 @@ impl S3Backend {
                     "Artifacts for build {} are outdated, reuploading",
                     &build_id
                 );
-                self.delete_bucket_dir(build_id, s3_client).await?;
-                self.upload_cache_dir(cache_dir, build_id, s3_client)
-                    .await?;
-                if cloudfront_client.is_some() {
-                    self.create_invalidation(build_id, cloudfront_client.as_ref().unwrap())
-                        .await?;
-                }
+                self.delete_bucket_dir(build_id).await?;
+                self.upload_cache_dir(cache_dir, build_id).await?;
+                self.create_invalidation(build_id).await?;
             } else {
                 info!(
                     "Artifacts for build {} not found in bucket, uploading",
                     &build_id
                 );
-                self.upload_cache_dir(cache_dir, build_id, s3_client)
-                    .await?;
+                self.upload_cache_dir(cache_dir, build_id).await?;
             }
         }
 
@@ -407,11 +384,8 @@ impl S3Backend {
                     "Artifacts found in bucket for deleted build {}, removing",
                     &build_id
                 );
-                self.delete_bucket_dir(build_id, s3_client).await?;
-                if cloudfront_client.is_some() {
-                    self.create_invalidation(build_id, cloudfront_client.as_ref().unwrap())
-                        .await?;
-                }
+                self.delete_bucket_dir(build_id).await?;
+                self.create_invalidation(build_id).await?;
             }
         }
 
