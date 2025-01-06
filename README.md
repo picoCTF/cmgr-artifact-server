@@ -100,14 +100,27 @@ When using this backend with the [picoCTF platform](https://github.com/picoCTF/p
 yet publicly available), specify your bucket or CloudFront distribution URL (including path prefix,
 if applicable) as the challenge server's **artifact base URL**.
 
+## Using Build Digests
+
+By default, `cmgr-artifact-server` exposes artifacts at paths which include their associated build IDs, as shown in the above examples.
+
+However, this can be undesirable as it allows players to easily enumerate artifact URLs. Specifically, since multiple builds of a challenge will have adjacent build IDs, players can decrement and increment the build ID portion of their download URLs in order to discover artifacts for other builds of the same challenge.
+
+This can lead to players discovering flags for other builds, or gaining unintended information by diffing multiple builds' versions of an artifact.
+
+To mitigate this, the build ID component of artifact URL paths can be replaced with the lowercase SHA-256 hexadecimal digest of `{build_id}:{salt}` by specifying a salt value with the `-s / --salt` command-line flag.
+
+Accordingly, any client applications that generate URLs served by `cmgr-artifact-server` must also apply this same transformation.
+
 ## Options
 
 | short | long | description |
 | --- | --- | --- |
 | `-b` | `--backend` | File hosting backend. Options: `selfhosted`, `S3`. |
-| `-h` | `--help` | Prints help information. |
-| `-l` | `--log-level` | Specify log level. Options: `error`, `warn`, `info`, `debug`, `trace`. Defaults to `info`. |
 | `-o` | `--backend-option` | Backend-specific option in `key=value` format. May be specified multiple times. Some options may be required - see backend-specific documentation. |
+| `-s` | `--salt` | Optional salt for build digests. See [using build digests](#using-build-digests). |
+| `-l` | `--log-level` | Specify log level. Options: `error`, `warn`, `info`, `debug`, `trace`. Defaults to `info`. |
+| `-h` | `--help` | Prints help information. |
 | `-V` | `--version` | Prints version information. |
 
 ### `selfhosted` backend options
