@@ -1,9 +1,11 @@
+use crate::get_cache_dir_checksum;
+
+use super::{BuildEvent, CHECKSUM_FILENAME};
 use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use log::{debug, info, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::Path;
@@ -13,15 +15,6 @@ use std::time::Duration;
 use tar::Archive;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
-
-/// Represents detected changes to artifact tarballs.
-/// The included string is the build ID.
-#[derive(Debug)]
-pub enum BuildEvent {
-    Create(String),
-    Update(String),
-    Delete(String),
-}
 
 /// Returns the checksum of an artifact tarball.
 fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
@@ -39,15 +32,6 @@ fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
         }
     }
     Ok(hasher.finalize().as_slice().into())
-}
-
-pub const CHECKSUM_FILENAME: &str = ".__checksum";
-
-/// Returns the tarball checksum stored inside a cache directory.
-pub(crate) fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
-    let mut checksum_path = PathBuf::from(cache_dir);
-    checksum_path.push(CHECKSUM_FILENAME);
-    fs::read(checksum_path)
 }
 
 /// Attempts to remove a directory, suppressing a returned Error if the directory has already
@@ -80,7 +64,7 @@ fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
 
 /// Converts a PathBuf to a filename string slice.
 /// Panics if the conversion fails.
-pub(crate) fn to_filename_str(path: &Path) -> &str {
+fn to_filename_str(path: &Path) -> &str {
     path.file_name()
         .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path))
         .to_str()

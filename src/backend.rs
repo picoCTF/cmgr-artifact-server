@@ -7,7 +7,7 @@ pub(crate) use selfhosted::SelfhostedBackend;
 use std::{collections::HashMap, future::Future, path::Path};
 use tokio::sync::mpsc::Receiver;
 
-use crate::watcher::BuildEvent;
+use crate::BuildEvent;
 
 pub trait Backend: Sized {
     /// Create an instance of the backend if all required options are provided.

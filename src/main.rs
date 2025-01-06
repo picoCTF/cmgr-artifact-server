@@ -7,8 +7,15 @@ use log::{debug, info};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use watcher::{sync_cache, watch_dir};
+
+/// Name of file containing a tarball checksum inside a cache directory.
+pub(crate) const CHECKSUM_FILENAME: &str = ".__checksum";
+
+/// The name of a cache directory.
+type BuildId = String;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -107,3 +114,18 @@ fn parse_backend_option(option: &str) -> Result<(String, String), anyhow::Error>
             anyhow::bail!("Provided backend option \"{option}\" is invalid. Backend options must be specified in key=value format.");
             }
     }
+
+/// Returns the tarball checksum stored inside a cache directory.
+pub(crate) fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let mut checksum_path = PathBuf::from(cache_dir);
+    checksum_path.push(CHECKSUM_FILENAME);
+    fs::read(checksum_path)
+}
+
+/// A detected change to an artifact tarball.
+#[derive(Debug)]
+pub(crate) enum BuildEvent {
+    Create(BuildId),
+    Update(BuildId),
+    Delete(BuildId),
+}

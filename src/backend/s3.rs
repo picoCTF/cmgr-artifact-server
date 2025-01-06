@@ -1,5 +1,5 @@
 use crate::backend::Backend;
-use crate::watcher::{get_cache_dir_checksum, to_filename_str, BuildEvent, CHECKSUM_FILENAME};
+use crate::{get_cache_dir_checksum, BuildEvent, CHECKSUM_FILENAME};
 use aws_config::BehaviorVersion;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
@@ -52,6 +52,7 @@ impl Backend for S3Backend {
         cache_dir: &Path,
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
+        // TODO: stash in backend struct
         // Create S3 and CloudFront clients
         let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
             .load()
@@ -320,7 +321,11 @@ impl S3Backend {
         for dir_entry in fs::read_dir(cache_dir)? {
             let path_buf = dir_entry?.path();
             if path_buf.is_dir() {
-                let dir_name = to_filename_str(&path_buf);
+                let dir_name = path_buf
+                    .file_name()
+                    .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path_buf))
+                    .to_str()
+                    .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path_buf));
                 cache_dirs.insert(dir_name.into(), path_buf);
             }
         }
