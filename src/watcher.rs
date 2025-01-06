@@ -3,8 +3,7 @@ use flate2::read::GzDecoder;
 use log::{debug, info, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
 use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::Path;
@@ -14,20 +13,6 @@ use std::time::Duration;
 use tar::Archive;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
-
-#[derive(Debug)]
-pub struct OptionParsingError;
-
-impl Error for OptionParsingError {}
-
-impl Display for OptionParsingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Encountered an invalid option. Backend options must be specified in key=value format."
-        )
-    }
-}
 
 /// Represents detected changes to artifact tarballs.
 /// The included string is the build ID.

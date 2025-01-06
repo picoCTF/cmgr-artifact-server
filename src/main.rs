@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use watcher::{sync_cache, watch_dir, OptionParsingError};
+use watcher::{sync_cache, watch_dir};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -94,13 +94,13 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn parse_options(options: Vec<String>) -> Result<HashMap<String, String>, OptionParsingError> {
+fn parse_options(options: Vec<String>) -> Result<HashMap<String, String>, anyhow::Error> {
     let mut map = HashMap::new();
     for option in options {
         if let Some((key, value)) = option.split_once('=') {
             map.insert(key.into(), value.into());
         } else {
-            return Err(OptionParsingError);
+            anyhow::bail!("Encountered an invalid option ({option}). Backend options must be specified in key=value format.");
         }
     }
     Ok(map)
