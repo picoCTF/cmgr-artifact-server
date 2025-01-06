@@ -37,5 +37,5 @@ pub trait Backend: Sized {
         &self,
         cache_dir: &Path,
         rx: Receiver<BuildEvent>,
-    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+    ) -> impl Future<Output = Result<(), anyhow::Error>>;
 }
