@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v2.1.0
+
+- Added the ability to replace build IDs in artifact download URLs with a salted SHA-256 digest.
+- Code cleanup and dependency updates.
+
 ## v2.0.6
 
 Dependency updates.
