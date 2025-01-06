@@ -79,7 +79,7 @@ impl Backend for Selfhosted {
         &self,
         cache_dir: &Path,
         mut _rx: Receiver<BuildEvent>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), anyhow::Error> {
         let static_ = Static::new(cache_dir);
 
         let addr: SocketAddr = self.address.parse()?;

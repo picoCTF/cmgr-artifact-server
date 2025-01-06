@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), anyhow::Error> {
     let matches = Command::new(clap::crate_name!())
     .version(clap::crate_version!())
     .author(clap::crate_authors!())

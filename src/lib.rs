@@ -95,7 +95,7 @@ pub trait Backend: Sized {
         &self,
         cache_dir: &Path,
         rx: Receiver<BuildEvent>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
+    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
 }
 
 /// Returns the checksum of an artifact tarball.

@@ -61,7 +61,7 @@ impl Backend for S3 {
         &self,
         cache_dir: &Path,
         mut rx: Receiver<BuildEvent>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         // Create S3 and CloudFront clients
         let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
             .load()
@@ -118,7 +118,7 @@ impl S3 {
         &self,
         s3_client: &aws_sdk_s3::Client,
         cloudfront_client: &Option<aws_sdk_cloudfront::Client>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         debug!("Testing ListObjectsV2");
         s3_client
             .list_objects_v2()
@@ -186,7 +186,7 @@ impl S3 {
         cache_dir: &Path,
         build: &str,
         s3_client: &aws_sdk_s3::Client,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let mut build_cache_dir = PathBuf::from(cache_dir);
         build_cache_dir.push(build);
         for entry in WalkDir::new(&build_cache_dir).min_depth(1) {
@@ -219,7 +219,7 @@ impl S3 {
         &self,
         build: &str,
         s3_client: &aws_sdk_s3::Client,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let prefix = format!("{}{}/", self.path_prefix, build);
         let resp = s3_client
             .list_objects_v2()
@@ -270,7 +270,7 @@ impl S3 {
         &self,
         build: &str,
         cloudfront_client: &aws_sdk_cloudfront::Client,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let path = format!("/{}{}*", self.path_prefix, build);
         debug!("Creating invalidation for path: {}", &path);
         let paths = aws_sdk_cloudfront::types::Paths::builder()
@@ -301,7 +301,7 @@ impl S3 {
         &self,
         build: &str,
         s3_client: &aws_sdk_s3::Client,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<Vec<u8>>, anyhow::Error> {
         let checksum_path = format!("{}{}/{}", &self.path_prefix, build, CHECKSUM_FILENAME);
         let resp = s3_client
             .get_object()
@@ -324,7 +324,7 @@ impl S3 {
         cache_dir: &Path,
         s3_client: &aws_sdk_s3::Client,
         cloudfront_client: &Option<aws_sdk_cloudfront::Client>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         // Get build IDs and paths of all local cache directories
         let mut cache_dirs: HashMap<String, PathBuf> = HashMap::new();
         for dir_entry in fs::read_dir(cache_dir)? {
