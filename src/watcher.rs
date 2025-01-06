@@ -3,6 +3,7 @@ use crate::get_cache_dir_checksum;
 use super::{BuildEvent, CHECKSUM_FILENAME};
 use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
+use hex::ToHex;
 use log::{debug, info, trace};
 use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
 use std::collections::HashMap;
@@ -46,7 +47,7 @@ fn maybe_remove_dir(path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-/// Recreates the specified chache directory and extracts a tarball there.
+/// Recreates the specified cache directory and extracts a tarball there.
 /// Also writes the tarball's checksum to a file named .__checksum.
 fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
     maybe_remove_dir(cache_dir)?;
@@ -75,7 +76,11 @@ fn to_filename_str(path: &Path) -> &str {
 ///
 /// Any new or modified (based on a computed checksum) artifact tarballs will be extracted to the
 /// cache. Any cache subdirectories no longer corresponding to an artifact tarball will be deleted.
-pub(crate) fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), std::io::Error> {
+pub(crate) fn sync_cache(
+    artifact_dir: &Path,
+    cache_dir: &Path,
+    digest_salt: Option<&str>,
+) -> Result<(), std::io::Error> {
     // Collect build IDs and paths of all existing artifact tarballs
     let mut tarballs: HashMap<String, PathBuf> = HashMap::new();
     for dir_entry in fs::read_dir(artifact_dir)? {
@@ -83,6 +88,14 @@ pub(crate) fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), st
         let filename = to_filename_str(&path_buf);
         if filename.ends_with(".tar.gz") {
             let build_id = filename.trim_end_matches(".tar.gz");
+            let build_id = match digest_salt {
+                Some(salt) => {
+                    let digest = sha2::Sha256::digest(format!("{build_id}:{salt}")).encode_hex();
+                    debug!("digested build ID {build_id} -> {digest}");
+                    digest
+                }
+                None => build_id.to_owned(),
+            };
             tarballs.insert(build_id.into(), path_buf);
         }
     }
@@ -104,18 +117,18 @@ pub(crate) fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), st
     debug!("Found {} cache directories", cache_dirs.len());
 
     // Ensure that the cache dir for each tarball is up to date
-    for (build_id, tarball) in &tarballs {
+    for (build_id, tarball_path) in &tarballs {
         let mut reason = "missing";
         if let Some(cache_dir) = cache_dirs.get(build_id) {
             reason = "outdated";
-            if get_tarball_checksum(tarball)? == get_cache_dir_checksum(cache_dir)? {
+            if get_tarball_checksum(tarball_path)? == get_cache_dir_checksum(cache_dir)? {
                 continue;
             }
         }
         debug!("Cache for build {} is {}, recreating", build_id, reason);
         let mut build_cache_dir = PathBuf::from(cache_dir);
         build_cache_dir.push(build_id);
-        extract_to(&build_cache_dir, tarball)?;
+        extract_to(&build_cache_dir, tarball_path)?;
     }
 
     // Remove any cache dirs without a matching tarball
@@ -132,11 +145,16 @@ pub(crate) fn sync_cache(artifact_dir: &Path, cache_dir: &Path) -> Result<(), st
 ///
 /// If an artifact tarball is modified or deleted, its corresponding cache subdirectory is recreated
 /// or deleted before sending a BuildEvent on the returned channel.
-pub(crate) fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<BuildEvent> {
+pub(crate) fn watch_dir(
+    artifact_dir: &Path,
+    cache_dir: &Path,
+    digest_salt: Option<&str>,
+) -> Receiver<BuildEvent> {
     let (tx, rx) = channel(32);
     thread::spawn({
         let artifact_dir = PathBuf::from(artifact_dir);
         let cache_dir = PathBuf::from(cache_dir);
+        let digest_salt = digest_salt.clone().map(|s| s.to_owned());
         move || {
             let (watcher_tx, watcher_rx) = std::sync::mpsc::channel();
             let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, Duration::from_secs(2))
@@ -154,13 +172,23 @@ pub(crate) fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<Build
                                 if filename.ends_with(".tar.gz") {
                                     // Artifact tarball creation detected
                                     let build_id = filename.trim_end_matches(".tar.gz");
+                                    let build_id = match digest_salt {
+                                        Some(ref salt) => {
+                                            let digest =
+                                                sha2::Sha256::digest(format!("{build_id}:{salt}"))
+                                                    .encode_hex();
+                                            debug!("digested build ID {build_id} -> {digest}");
+                                            digest
+                                        }
+                                        None => build_id.to_owned(),
+                                    };
                                     info!("Creating artifact cache for build {}", build_id);
                                     let mut cache_dir = PathBuf::from(&cache_dir);
-                                    cache_dir.push(build_id);
+                                    cache_dir.push(&build_id);
                                     extract_to(&cache_dir, &p).unwrap_or_else(|_| {
                                         panic!("Failed to extract artifact tarball {}", p.display())
                                     });
-                                    tx.blocking_send(BuildEvent::Create(build_id.into()))
+                                    tx.blocking_send(BuildEvent::Create(build_id))
                                         .expect("Failed to send build event");
                                 }
                             }
@@ -169,9 +197,19 @@ pub(crate) fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<Build
                                 if filename.ends_with(".tar.gz") {
                                     // Artifact tarball update detected
                                     let build_id = filename.trim_end_matches(".tar.gz");
+                                    let build_id = match digest_salt {
+                                        Some(ref salt) => {
+                                            let digest =
+                                                sha2::Sha256::digest(format!("{build_id}:{salt}"))
+                                                    .encode_hex();
+                                            debug!("digested build ID {build_id} -> {digest}");
+                                            digest
+                                        }
+                                        None => build_id.to_owned(),
+                                    };
                                     info!("Updating artifact cache for build {}", build_id);
                                     let mut cache_dir = PathBuf::from(&cache_dir);
-                                    cache_dir.push(build_id);
+                                    cache_dir.push(&build_id);
                                     extract_to(&cache_dir, &p).unwrap_or_else(|_| {
                                         panic!("Failed to extract artifact tarball {}", p.display())
                                     });
@@ -184,9 +222,19 @@ pub(crate) fn watch_dir(artifact_dir: &Path, cache_dir: &Path) -> Receiver<Build
                                 if filename.ends_with(".tar.gz") {
                                     // Artifact tarball removal detected
                                     let build_id = filename.trim_end_matches(".tar.gz");
+                                    let build_id = match digest_salt {
+                                        Some(ref salt) => {
+                                            let digest =
+                                                sha2::Sha256::digest(format!("{build_id}:{salt}"))
+                                                    .encode_hex();
+                                            debug!("digested build ID {build_id} -> {digest}");
+                                            digest
+                                        }
+                                        None => build_id.to_owned(),
+                                    };
                                     info!("Deleting artifact cache for build {}", build_id);
                                     let mut cache_dir = PathBuf::from(&cache_dir);
-                                    cache_dir.push(build_id);
+                                    cache_dir.push(&build_id);
                                     maybe_remove_dir(&cache_dir).unwrap_or_else(|_| {
                                         panic!(
                                             "Failed to remove cache directory {}",

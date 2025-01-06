@@ -48,8 +48,14 @@ async fn main() -> Result<(), anyhow::Error> {
         .long("backend-option")
         .help("Backend-specific option in key=value format.\nMay be specified multiple times.")
         .action(ArgAction::Append)
-.value_parser(parse_backend_option)
+        .value_parser(parse_backend_option)
         .number_of_values(1)
+    )
+    .arg(Arg::new("salt")
+        .short('s')
+        .long("salt")
+        .help("If set, build IDs in artifact paths are replaced with the hexadecimal SHA-256 digest of \"{id}:{salt}\".\nHelps prevent players from discovering and comparing artifact files between builds.\nClients must perform the same operation when constructing URLs.")
+        .required(false)
     )
     .get_matches();
 
@@ -63,12 +69,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Collect supplied backend options
     let backend_options: HashMap<String, String> =
-if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
-        HashMap::from_iter(options.cloned())
-    } else {
-        HashMap::new()
-    };
-        debug!("Supplied backend options: {backend_options:?}");
+        if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
+            HashMap::from_iter(options.cloned())
+        } else {
+            HashMap::new()
+        };
+    debug!("Supplied backend options: {backend_options:?}");
 
     // Determine artifact directory
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
@@ -81,12 +87,19 @@ if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
     // Ensure cache directory exists
     fs::create_dir_all(&cache_dir)?;
 
+    // Determine digest salt
+    let salt: Option<&str> = matches.get_one("salt").map(|s: &String| s.as_str());
+    match salt {
+        Some(salt) => debug!("Determined build digest salt: {salt}"),
+        None => debug!("Using original build IDs"),
+    }
+
     // Synchronize cache directory
     info!("Updating artifact cache");
-    sync_cache(&artifact_dir, &cache_dir)?;
+    sync_cache(&artifact_dir, &cache_dir, salt)?;
 
     // Watch artifact directory
-    let rx = watch_dir(&artifact_dir, &cache_dir);
+    let rx = watch_dir(&artifact_dir, &cache_dir, salt);
 
     // Start backend
     match matches
@@ -96,7 +109,7 @@ if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
         .as_str()
     {
         "selfhosted" => {
-SelfhostedBackend::new(backend_options)
+            SelfhostedBackend::new(backend_options)
                 .await?
                 .run(&cache_dir, rx)
                 .await
@@ -104,22 +117,22 @@ SelfhostedBackend::new(backend_options)
         "s3" => {
             S3Backend::new(backend_options)
                 .await?
-.run(&cache_dir, rx)
-.await
+                .run(&cache_dir, rx)
+                .await
         }
-                _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
+        _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())
 }
 
 /// Parses a backend option in `key=value` format.
 fn parse_backend_option(option: &str) -> Result<(String, String), anyhow::Error> {
-            if let Some((key, value)) = option.split_once('=') {
-            Ok((key.to_owned(), value.to_owned()))
-        } else {
-            anyhow::bail!("Provided backend option \"{option}\" is invalid. Backend options must be specified in key=value format.");
-            }
+    if let Some((key, value)) = option.split_once('=') {
+        Ok((key.to_owned(), value.to_owned()))
+    } else {
+        anyhow::bail!("Provided backend option \"{option}\" is invalid. Backend options must be specified in key=value format.");
     }
+}
 
 /// Returns the tarball checksum stored inside a cache directory.
 pub(crate) fn get_cache_dir_checksum(cache_dir: &Path) -> Result<Vec<u8>, std::io::Error> {
