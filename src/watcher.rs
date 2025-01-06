@@ -96,7 +96,7 @@ pub(crate) fn sync_cache(
                 }
                 None => build_id.to_owned(),
             };
-            tarballs.insert(build_id.into(), path_buf);
+            tarballs.insert(build_id, path_buf);
         }
     }
     debug!("Found {} artifact tarballs", tarballs.len());
@@ -154,7 +154,7 @@ pub(crate) fn watch_dir(
     thread::spawn({
         let artifact_dir = PathBuf::from(artifact_dir);
         let cache_dir = PathBuf::from(cache_dir);
-        let digest_salt = digest_salt.clone().map(|s| s.to_owned());
+        let digest_salt = digest_salt.map(|s| s.to_owned());
         move || {
             let (watcher_tx, watcher_rx) = std::sync::mpsc::channel();
             let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, Duration::from_secs(2))
@@ -213,7 +213,7 @@ pub(crate) fn watch_dir(
                                     extract_to(&cache_dir, &p).unwrap_or_else(|_| {
                                         panic!("Failed to extract artifact tarball {}", p.display())
                                     });
-                                    tx.blocking_send(BuildEvent::Update(build_id.into()))
+                                    tx.blocking_send(BuildEvent::Update(build_id))
                                         .expect("Failed to send build event");
                                 }
                             }
@@ -241,7 +241,7 @@ pub(crate) fn watch_dir(
                                             cache_dir.display()
                                         )
                                     });
-                                    tx.blocking_send(BuildEvent::Delete(build_id.into()))
+                                    tx.blocking_send(BuildEvent::Delete(build_id))
                                         .expect("Failed to send build event");
                                 }
                             }
