@@ -1,4 +1,4 @@
-use crate::get_cache_dir_checksum;
+use crate::{get_cache_dir_checksum, BuildId};
 
 use super::{BuildEvent, CHECKSUM_FILENAME};
 use blake2::{Blake2b512, Digest};
@@ -85,17 +85,7 @@ pub(crate) fn sync_cache(
     let mut tarballs: HashMap<String, PathBuf> = HashMap::new();
     for dir_entry in fs::read_dir(artifact_dir)? {
         let path_buf = dir_entry?.path();
-        let filename = to_filename_str(&path_buf);
-        if filename.ends_with(".tar.gz") {
-            let build_id = filename.trim_end_matches(".tar.gz");
-            let build_id = match digest_salt {
-                Some(salt) => {
-                    let digest = sha2::Sha256::digest(format!("{build_id}:{salt}")).encode_hex();
-                    debug!("digested build ID {build_id} -> {digest}");
-                    digest
-                }
-                None => build_id.to_owned(),
-            };
+        if let Some(build_id) = is_artifact_tarball(&path_buf, digest_salt) {
             tarballs.insert(build_id, path_buf);
         }
     }
@@ -168,20 +158,9 @@ pub(crate) fn watch_dir(
                         trace!("Detected file event: {:?}", event);
                         match event {
                             DebouncedEvent::Create(p) => {
-                                let filename = to_filename_str(&p);
-                                if filename.ends_with(".tar.gz") {
-                                    // Artifact tarball creation detected
-                                    let build_id = filename.trim_end_matches(".tar.gz");
-                                    let build_id = match digest_salt {
-                                        Some(ref salt) => {
-                                            let digest =
-                                                sha2::Sha256::digest(format!("{build_id}:{salt}"))
-                                                    .encode_hex();
-                                            debug!("digested build ID {build_id} -> {digest}");
-                                            digest
-                                        }
-                                        None => build_id.to_owned(),
-                                    };
+                                if let Some(build_id) =
+                                    is_artifact_tarball(&p, digest_salt.as_deref())
+                                {
                                     info!("Creating artifact cache for build {}", build_id);
                                     let mut cache_dir = PathBuf::from(&cache_dir);
                                     cache_dir.push(&build_id);
@@ -193,20 +172,9 @@ pub(crate) fn watch_dir(
                                 }
                             }
                             DebouncedEvent::Write(p) => {
-                                let filename = to_filename_str(&p);
-                                if filename.ends_with(".tar.gz") {
-                                    // Artifact tarball update detected
-                                    let build_id = filename.trim_end_matches(".tar.gz");
-                                    let build_id = match digest_salt {
-                                        Some(ref salt) => {
-                                            let digest =
-                                                sha2::Sha256::digest(format!("{build_id}:{salt}"))
-                                                    .encode_hex();
-                                            debug!("digested build ID {build_id} -> {digest}");
-                                            digest
-                                        }
-                                        None => build_id.to_owned(),
-                                    };
+                                if let Some(build_id) =
+                                    is_artifact_tarball(&p, digest_salt.as_deref())
+                                {
                                     info!("Updating artifact cache for build {}", build_id);
                                     let mut cache_dir = PathBuf::from(&cache_dir);
                                     cache_dir.push(&build_id);
@@ -218,20 +186,9 @@ pub(crate) fn watch_dir(
                                 }
                             }
                             DebouncedEvent::Remove(p) => {
-                                let filename = to_filename_str(&p);
-                                if filename.ends_with(".tar.gz") {
-                                    // Artifact tarball removal detected
-                                    let build_id = filename.trim_end_matches(".tar.gz");
-                                    let build_id = match digest_salt {
-                                        Some(ref salt) => {
-                                            let digest =
-                                                sha2::Sha256::digest(format!("{build_id}:{salt}"))
-                                                    .encode_hex();
-                                            debug!("digested build ID {build_id} -> {digest}");
-                                            digest
-                                        }
-                                        None => build_id.to_owned(),
-                                    };
+                                if let Some(build_id) =
+                                    is_artifact_tarball(&p, digest_salt.as_deref())
+                                {
                                     info!("Deleting artifact cache for build {}", build_id);
                                     let mut cache_dir = PathBuf::from(&cache_dir);
                                     cache_dir.push(&build_id);
@@ -254,4 +211,22 @@ pub(crate) fn watch_dir(
         }
     });
     rx
+}
+
+/// Determines whether a path is a cmgr artifact tarball. If so, returns the build ID.
+fn is_artifact_tarball(path: &Path, digest_salt: Option<&str>) -> Option<BuildId> {
+    let filename = to_filename_str(path);
+    if !filename.ends_with(".tar.gz") {
+        return None;
+    }
+    let build_id = filename.trim_end_matches(".tar.gz");
+    let build_id = match digest_salt {
+        Some(ref salt) => {
+            let digest = sha2::Sha256::digest(format!("{build_id}:{salt}")).encode_hex();
+            debug!("digested build ID {build_id} -> {digest}");
+            digest
+        }
+        None => build_id.to_owned(),
+    };
+    Some(build_id)
 }
