@@ -41,6 +41,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .long("backend-option")
         .help("Backend-specific option in key=value format.\nMay be specified multiple times.")
         .action(ArgAction::Append)
+.value_parser(parse_backend_option)
         .number_of_values(1)
     )
     .get_matches();
@@ -54,13 +55,13 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // Collect supplied backend options
-    let options: Vec<String> = if let Some(v) = matches.get_many::<String>("backend-option") {
-        v.cloned().collect()
+    let backend_options: HashMap<String, String> =
+if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
+        HashMap::from_iter(options.cloned())
     } else {
-        vec![]
+        HashMap::new()
     };
-    let options = parse_options(options)?;
-    debug!("Supplied backend options: {:?}", options);
+        debug!("Supplied backend options: {backend_options:?}");
 
     // Determine artifact directory
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
@@ -87,21 +88,22 @@ async fn main() -> Result<(), anyhow::Error> {
         .to_lowercase()
         .as_str()
     {
-        "selfhosted" => SelfhostedBackend::new(options)?.run(&cache_dir, rx).await,
-        "s3" => S3Backend::new(options)?.run(&cache_dir, rx).await,
+        "selfhosted" => {
+SelfhostedBackend::new(backend_options)?
+.run(&cache_dir, rx)
+.await
+        }
+        "s3" => S3Backend::new(backend_options)?.run(&cache_dir, rx).await,
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead
     }?;
     Ok(())
 }
 
-fn parse_options(options: Vec<String>) -> Result<HashMap<String, String>, anyhow::Error> {
-    let mut map = HashMap::new();
-    for option in options {
-        if let Some((key, value)) = option.split_once('=') {
-            map.insert(key.into(), value.into());
+/// Parses a backend option in `key=value` format.
+fn parse_backend_option(option: &str) -> Result<(String, String), anyhow::Error> {
+            if let Some((key, value)) = option.split_once('=') {
+            Ok((key.to_owned(), value.to_owned()))
         } else {
-            anyhow::bail!("Encountered an invalid option ({option}). Backend options must be specified in key=value format.");
-        }
+            anyhow::bail!("Provided backend option \"{option}\" is invalid. Backend options must be specified in key=value format.");
+            }
     }
-    Ok(map)
-}
