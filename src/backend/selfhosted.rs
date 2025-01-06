@@ -14,7 +14,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::Receiver;
 
 #[derive(Debug)]
-pub struct SelfhostedBackend {
+pub(crate) struct SelfhostedBackend {
     address: String,
 }
 
