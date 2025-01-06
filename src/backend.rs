@@ -4,14 +4,14 @@ mod selfhosted;
 pub(crate) use s3::S3Backend;
 pub(crate) use selfhosted::SelfhostedBackend;
 
-use std::{collections::HashMap, future::Future, path::Path};
+use std::{collections::HashMap, path::Path};
 use tokio::sync::mpsc::Receiver;
 
 use crate::BuildEvent;
 
 pub trait Backend: Sized {
     /// Create an instance of the backend if all required options are provided.
-    fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error>;
+    async fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error>;
 
     /// Run the backend.
     ///
@@ -33,9 +33,5 @@ pub trait Backend: Sized {
     ///
     /// As there is the potential for race conditions when handling build events, backends must
     /// process any events with the same build ID serially in the order of their arrival.
-    fn run(
-        &self,
-        cache_dir: &Path,
-        rx: Receiver<BuildEvent>,
-    ) -> impl Future<Output = Result<(), anyhow::Error>>;
+    async fn run(&self, cache_dir: &Path, rx: Receiver<BuildEvent>) -> Result<(), anyhow::Error>;
 }
