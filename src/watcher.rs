@@ -5,7 +5,8 @@ use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use hex::ToHex;
 use log::{debug, info, trace};
-use notify::{DebouncedEvent, RecommendedWatcher, Watcher};
+use notify_debouncer_full::notify::{self, EventKind, RecommendedWatcher};
+use notify_debouncer_full::Debouncer;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek};
@@ -147,65 +148,100 @@ pub(crate) fn watch_dir(
         let digest_salt = digest_salt.map(|s| s.to_owned());
         move || {
             let (watcher_tx, watcher_rx) = std::sync::mpsc::channel();
-            let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, Duration::from_secs(2))
+            let notify_config =
+                notify::Config::default().with_poll_interval(Duration::from_secs(2));
+            let mut watcher: Debouncer<RecommendedWatcher, _> =
+                notify_debouncer_full::new_debouncer_opt(
+                    Duration::from_secs(2),
+                    None,
+                    watcher_tx,
+                    notify_debouncer_full::RecommendedCache::new(),
+                    notify_config,
+                )
                 .expect("Failed to create file watcher");
             watcher
                 .watch(&artifact_dir, notify::RecursiveMode::NonRecursive)
                 .expect("Failed to start file watcher");
             loop {
                 match watcher_rx.recv() {
-                    Ok(event) => {
-                        trace!("Detected file event: {:?}", event);
-                        match event {
-                            DebouncedEvent::Create(p) => {
-                                if let Some(build_id) =
-                                    is_artifact_tarball(&p, digest_salt.as_deref())
-                                {
-                                    info!("Creating artifact cache for build {}", build_id);
-                                    let mut cache_dir = PathBuf::from(&cache_dir);
-                                    cache_dir.push(&build_id);
-                                    extract_to(&cache_dir, &p).unwrap_or_else(|_| {
-                                        panic!("Failed to extract artifact tarball {}", p.display())
-                                    });
-                                    tx.blocking_send(BuildEvent::Create(build_id))
-                                        .expect("Failed to send build event");
+                    Ok(event_result) => match event_result {
+                        Ok(events) => {
+                            for event in events {
+                                trace!("Detected file event: {:?}", event);
+                                match event.kind {
+                                    EventKind::Create(_) => {
+                                        for path in &event.paths {
+                                            if let Some(build_id) =
+                                                is_artifact_tarball(path, digest_salt.as_deref())
+                                            {
+                                                info!(
+                                                    "Creating artifact cache for build {}",
+                                                    build_id
+                                                );
+                                                let mut cache_dir = PathBuf::from(&cache_dir);
+                                                cache_dir.push(&build_id);
+                                                extract_to(&cache_dir, path).unwrap_or_else(|_| {
+                                                    panic!(
+                                                        "Failed to extract artifact tarball {}",
+                                                        path.display()
+                                                    )
+                                                });
+                                                tx.blocking_send(BuildEvent::Create(build_id))
+                                                    .expect("Failed to send build event");
+                                            }
+                                        }
+                                    }
+                                    EventKind::Modify(_) => {
+                                        for path in &event.paths {
+                                            if let Some(build_id) =
+                                                is_artifact_tarball(path, digest_salt.as_deref())
+                                            {
+                                                info!(
+                                                    "Updating artifact cache for build {}",
+                                                    build_id
+                                                );
+                                                let mut cache_dir = PathBuf::from(&cache_dir);
+                                                cache_dir.push(&build_id);
+                                                extract_to(&cache_dir, path).unwrap_or_else(|_| {
+                                                    panic!(
+                                                        "Failed to extract artifact tarball {}",
+                                                        path.display()
+                                                    )
+                                                });
+                                                tx.blocking_send(BuildEvent::Update(build_id))
+                                                    .expect("Failed to send build event");
+                                            }
+                                        }
+                                    }
+                                    EventKind::Remove(_) => {
+                                        for path in &event.paths {
+                                            if let Some(build_id) =
+                                                is_artifact_tarball(path, digest_salt.as_deref())
+                                            {
+                                                info!(
+                                                    "Deleting artifact cache for build {}",
+                                                    build_id
+                                                );
+                                                let mut cache_dir = PathBuf::from(&cache_dir);
+                                                cache_dir.push(&build_id);
+                                                maybe_remove_dir(&cache_dir).unwrap_or_else(|_| {
+                                                    panic!(
+                                                        "Failed to remove cache directory {}",
+                                                        cache_dir.display()
+                                                    )
+                                                });
+                                                tx.blocking_send(BuildEvent::Delete(build_id))
+                                                    .expect("Failed to send build event");
+                                            }
+                                        }
+                                    }
+                                    _ => (),
                                 }
                             }
-                            DebouncedEvent::Write(p) => {
-                                if let Some(build_id) =
-                                    is_artifact_tarball(&p, digest_salt.as_deref())
-                                {
-                                    info!("Updating artifact cache for build {}", build_id);
-                                    let mut cache_dir = PathBuf::from(&cache_dir);
-                                    cache_dir.push(&build_id);
-                                    extract_to(&cache_dir, &p).unwrap_or_else(|_| {
-                                        panic!("Failed to extract artifact tarball {}", p.display())
-                                    });
-                                    tx.blocking_send(BuildEvent::Update(build_id))
-                                        .expect("Failed to send build event");
-                                }
-                            }
-                            DebouncedEvent::Remove(p) => {
-                                if let Some(build_id) =
-                                    is_artifact_tarball(&p, digest_salt.as_deref())
-                                {
-                                    info!("Deleting artifact cache for build {}", build_id);
-                                    let mut cache_dir = PathBuf::from(&cache_dir);
-                                    cache_dir.push(&build_id);
-                                    maybe_remove_dir(&cache_dir).unwrap_or_else(|_| {
-                                        panic!(
-                                            "Failed to remove cache directory {}",
-                                            cache_dir.display()
-                                        )
-                                    });
-                                    tx.blocking_send(BuildEvent::Delete(build_id))
-                                        .expect("Failed to send build event");
-                                }
-                            }
-                            _ => (),
                         }
-                    }
-                    Err(e) => panic!("File watcher error: {e:?}"),
+                        Err(errors) => panic!("file watcher errors: {errors:?}"),
+                    },
+                    Err(e) => panic!("watcher channel receive error: {e:?}"),
                 }
             }
         }
