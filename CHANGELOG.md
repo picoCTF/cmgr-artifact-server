@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v2.2.0
+
+- Linux binaries are now built on Ubuntu 22.04 runners (rather than 24.04) for compability with a wider range of glibc versions.
+
 ## v2.1.0
 
 - Added the ability to replace build IDs in artifact download URLs with a salted SHA-256 digest.
