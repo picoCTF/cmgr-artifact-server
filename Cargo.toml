@@ -15,21 +15,21 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.95"
-aws-config = "1.5.13"
-aws-sdk-cloudfront = "1.59.0"
-aws-sdk-s3 = "1.68.0"
+aws-config = "1.5.15"
+aws-sdk-cloudfront = "1.63.0"
+aws-sdk-s3 = "1.72.0"
 blake2 = "0.10.6"
-clap = { version = "4.5.23", features = ["cargo"] }
+clap = { version = "4.5.27", features = ["cargo"] }
 env_logger = "0.11.6"
 flate2 = "1.0.35"
 hex = "0.4.3"
 http = "1.2.0"
-hyper = { version = "1.5.2", features = ["http1", "server"] }
+hyper = { version = "1.6.0", features = ["http1", "server"] }
 hyper-staticfile = "0.10.1"
 hyper-util = { version = "0.1.10", features = ["tokio"] }
-log = "0.4.22"
-notify-debouncer-full = "0.4.0"
+log = "0.4.25"
+notify-debouncer-full = "0.5.0"
 sha2 = "0.10.8"
 tar = "0.4.43"
-tokio = { version = "1.42.0", features = ["full"] }
+tokio = { version = "1.43.0", features = ["full"] }
 walkdir = "2.5.0"
