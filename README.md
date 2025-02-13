@@ -44,7 +44,7 @@ $ cmgrd &
 $ curl http://localhost:4200/builds/1/file.c            # 200 OK
 $ curl http://localhost:4200/builds/1                   # 200 OK
 $ curl http://localhost:4200/builds/1/artifacts.tar.gz  # 200 OK
-$ curl http://localhost:4201/challenges                 # 200 OK
+$ curl http://localhost:4200/challenges                 # 200 OK
 
 # With the selfhosted backend, cmgr-artifact-server serves individual artifact files only:
 $ cmgr-artifact-server -b selfhosted &
