@@ -1,7 +1,7 @@
 [package]
 name = "cmgr-artifact-server"
 description = "Server for cmgr challenge artifacts"
-version = "2.0.3"
+version = "2.2.0"
 edition = "2021"
 authors = [
   "Dustin Martin <dustin@dmartin.io>",
