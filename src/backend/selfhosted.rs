@@ -1,5 +1,5 @@
-use crate::backend::Backend;
 use crate::BuildEvent;
+use crate::backend::Backend;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_staticfile::{Body, Static};

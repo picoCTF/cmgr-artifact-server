@@ -69,11 +69,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Collect supplied backend options
     let backend_options: HashMap<String, String> =
-        match matches.get_many::<(String, String)>("backend-option") { Some(options) => {
-            HashMap::from_iter(options.cloned())
-        } _ => {
-            HashMap::new()
-        }};
+        match matches.get_many::<(String, String)>("backend-option") {
+            Some(options) => HashMap::from_iter(options.cloned()),
+            _ => HashMap::new(),
+        };
     debug!("Supplied backend options: {backend_options:?}");
 
     // Determine artifact directory
@@ -130,7 +129,9 @@ fn parse_backend_option(option: &str) -> Result<(String, String), anyhow::Error>
     if let Some((key, value)) = option.split_once('=') {
         Ok((key.to_owned(), value.to_owned()))
     } else {
-        anyhow::bail!("Provided backend option \"{option}\" is invalid. Backend options must be specified in key=value format.");
+        anyhow::bail!(
+            "Provided backend option \"{option}\" is invalid. Backend options must be specified in key=value format."
+        );
     }
 }
 

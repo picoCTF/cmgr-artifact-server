@@ -1,12 +1,12 @@
-use crate::{get_cache_dir_checksum, BuildId};
+use crate::{BuildId, get_cache_dir_checksum};
 
 use super::{BuildEvent, CHECKSUM_FILENAME};
 use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use hex::ToHex;
 use log::{debug, info, trace};
-use notify_debouncer_full::notify::{self, EventKind, RecommendedWatcher};
 use notify_debouncer_full::Debouncer;
+use notify_debouncer_full::notify::{self, EventKind, RecommendedWatcher};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek};
@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use tar::Archive;
-use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::channel;
 
 /// Returns the checksum of an artifact tarball.
 fn get_tarball_checksum(tarball: &Path) -> Result<Vec<u8>, std::io::Error> {
