@@ -69,11 +69,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Collect supplied backend options
     let backend_options: HashMap<String, String> =
-        if let Some(options) = matches.get_many::<(String, String)>("backend-option") {
+        match matches.get_many::<(String, String)>("backend-option") { Some(options) => {
             HashMap::from_iter(options.cloned())
-        } else {
+        } _ => {
             HashMap::new()
-        };
+        }};
     debug!("Supplied backend options: {backend_options:?}");
 
     // Determine artifact directory
