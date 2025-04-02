@@ -47,11 +47,7 @@ async fn handle_request<B>(
         }
         response
     };
-    info!(
-        "Serving request: {} ({})",
-        req.uri().to_string(),
-        res.status()
-    );
+    info!("Serving request: {} ({})", req.uri(), res.status());
     Ok(res)
 }
 
