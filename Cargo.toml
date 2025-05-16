@@ -4,7 +4,6 @@ description = "Server for cmgr challenge artifacts"
 version = "2.2.0"
 edition = "2024"
 authors = [
-  "Dustin Martin <dustin@dmartin.io>",
   "picoCTF team <opensource@picoctf.org>",
 ]
 repository = "https://github.com/picoCTF/cmgr-artifact-server"
