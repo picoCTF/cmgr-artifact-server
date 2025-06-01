@@ -18,7 +18,7 @@ aws-config = "1.6.2"
 aws-sdk-cloudfront = "1.72.0"
 aws-sdk-s3 = "1.83.0"
 blake2 = "0.10.6"
-clap = { version = "4.5.37", features = ["cargo"] }
+clap = { version = "4.5.39", features = ["cargo"] }
 env_logger = "0.11.8"
 flate2 = "1.1.1"
 hex = "0.4.3"
