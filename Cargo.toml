@@ -14,9 +14,9 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.98"
-aws-config = "1.6.2"
-aws-sdk-cloudfront = "1.72.0"
-aws-sdk-s3 = "1.83.0"
+aws-config = "1.6.3"
+aws-sdk-cloudfront = "1.78.0"
+aws-sdk-s3 = "1.85.0"
 blake2 = "0.10.6"
 clap = { version = "4.5.37", features = ["cargo"] }
 env_logger = "0.11.8"
