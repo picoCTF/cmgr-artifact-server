@@ -30,5 +30,5 @@ log = "0.4.27"
 notify-debouncer-full = "0.5.0"
 sha2 = "0.10.9"
 tar = "0.4.44"
-tokio = { version = "1.44.2", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"] }
 walkdir = "2.5.0"
