@@ -356,10 +356,10 @@ impl S3Backend {
         for (build_id, build_cache_dir) in &cache_dirs {
             if bucket_build_ids.contains(build_id) {
                 let bucket_checksum = self.get_bucket_dir_checksum(build_id).await?;
-                if let Some(bucket_checksum) = bucket_checksum {
-                    if bucket_checksum == get_cache_dir_checksum(build_cache_dir)? {
-                        continue;
-                    }
+                if let Some(bucket_checksum) = bucket_checksum
+                    && bucket_checksum == get_cache_dir_checksum(build_cache_dir)?
+                {
+                    continue;
                 }
                 info!(
                     "Artifacts for build {} are outdated, reuploading",
