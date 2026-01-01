@@ -412,7 +412,7 @@ dependencies = [
  "http 1.4.0",
  "http-body 0.4.6",
  "hyper 0.14.32",
- "hyper 1.7.0",
+ "hyper 1.8.1",
  "hyper-rustls 0.24.2",
  "hyper-rustls 0.27.5",
  "hyper-util",
@@ -728,7 +728,7 @@ dependencies = [
  "flate2",
  "hex",
  "http 1.4.0",
- "hyper 1.7.0",
+ "hyper 1.8.1",
  "hyper-staticfile",
  "hyper-util",
  "log",
@@ -1341,9 +1341,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.7.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb3aa54a13a0dfe7fbe3a59e0c76093041720fdc77b110cc0fc260fafb4dc51e"
+checksum = "2ab2d4f250c3d7b1c9fcdff1cece94ea4e2dfbec68614f7b87cb205f24ca9d11"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1386,7 +1386,7 @@ checksum = "2d191583f3da1305256f22463b9bb0471acad48a4e534a5218b9963e9c1f59b2"
 dependencies = [
  "futures-util",
  "http 1.4.0",
- "hyper 1.7.0",
+ "hyper 1.8.1",
  "hyper-util",
  "rustls 0.23.26",
  "rustls-native-certs 0.8.1",
@@ -1406,7 +1406,7 @@ dependencies = [
  "http 1.4.0",
  "http-range",
  "httpdate",
- "hyper 1.7.0",
+ "hyper 1.8.1",
  "mime_guess",
  "percent-encoding",
  "rand",
@@ -1427,7 +1427,7 @@ dependencies = [
  "futures-util",
  "http 1.4.0",
  "http-body 1.0.1",
- "hyper 1.7.0",
+ "hyper 1.8.1",
  "libc",
  "pin-project-lite",
  "socket2 0.6.0",

@@ -23,7 +23,7 @@ env_logger = "0.11.8"
 flate2 = "1.1.5"
 hex = "0.4.3"
 http = "1.4.0"
-hyper = { version = "1.7.0", features = ["http1", "server"] }
+hyper = { version = "1.8.1", features = ["http1", "server"] }
 hyper-staticfile = "0.10.1"
 hyper-util = { version = "0.1.17", features = ["tokio"] }
 log = "0.4.29"
