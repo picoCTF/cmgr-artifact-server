@@ -26,7 +26,7 @@ http = "1.4.0"
 hyper = { version = "1.7.0", features = ["http1", "server"] }
 hyper-staticfile = "0.10.1"
 hyper-util = { version = "0.1.17", features = ["tokio"] }
-log = "0.4.28"
+log = "0.4.29"
 notify-debouncer-full = "0.6.0"
 sha2 = "0.10.9"
 tar = "0.4.44"
