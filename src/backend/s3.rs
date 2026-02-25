@@ -40,9 +40,7 @@ impl Backend for S3Backend {
         debug!("Normalized path prefix: \"{}\"", path_prefix);
 
         // Create S3 and CloudFront clients
-        let shared_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
-            .load()
-            .await;
+        let shared_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
         let s3_client = aws_sdk_s3::Client::new(&shared_config);
         let cloudfront_client = options
             .get("cloudfront-distribution")
