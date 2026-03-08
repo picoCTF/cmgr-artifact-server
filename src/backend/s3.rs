@@ -84,9 +84,18 @@ impl Backend for S3Backend {
         info!("Watching for changes. Press CTRL-C to exit.");
         while let Some(event) = rx.recv().await {
             let mut events = vec![event];
-            // Drain any additional pending events for batching
-            while let Ok(event) = rx.try_recv() {
-                events.push(event);
+            // Drain any additional pending events for batching, but cap per-iteration drain
+            let mut drained = 0usize;
+            while drained < 1024 {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        events.push(event);
+                        drained += 1;
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
             }
 
             let mut invalidation_builds: Vec<String> = Vec::new();
