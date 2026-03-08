@@ -109,7 +109,9 @@ impl Backend for S3Backend {
                     }
                 }
             }
-            self.create_invalidation(&invalidation_builds).await?;
+            if self.cloudfront_client.is_some() {
+                self.create_invalidation(&invalidation_builds).await?;
+            }
         }
         Ok(())
     }
@@ -270,7 +272,7 @@ impl S3Backend {
                     .iter()
                     .map(|build| format!("/{}{}*", self.path_prefix, build))
                     .collect();
-                let quantity = items.len() as i32;
+                let quantity = i32::try_from(items.len())?;
                 debug!(
                     "Creating invalidation for {} path(s): {:?}",
                     quantity, &items
