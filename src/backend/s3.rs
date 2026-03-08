@@ -8,6 +8,7 @@ use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Receiver;
 use walkdir::WalkDir;
@@ -22,6 +23,7 @@ pub(crate) struct S3Backend {
     cloudfront_distribution: Option<String>,
     s3_client: aws_sdk_s3::Client,
     cloudfront_client: Option<aws_sdk_cloudfront::Client>,
+    invalidation_counter: AtomicU64,
 }
 
 impl Backend for S3Backend {
@@ -62,6 +64,7 @@ impl Backend for S3Backend {
                 .map(|v| v.to_string()),
             s3_client,
             cloudfront_client,
+            invalidation_counter: AtomicU64::new(0),
         };
         Ok(backend)
     }
@@ -276,7 +279,7 @@ impl S3Backend {
             return Ok(());
         }
         if let Some(cloudfront_client) = self.cloudfront_client.as_ref() {
-            for (chunk_idx, chunk) in builds.chunks(CLOUDFRONT_MAX_WILDCARD_PATHS).enumerate() {
+            for chunk in builds.chunks(CLOUDFRONT_MAX_WILDCARD_PATHS) {
                 let items: Vec<String> = chunk
                     .iter()
                     .map(|build| format!("/{}{}*", self.path_prefix, build))
@@ -292,14 +295,11 @@ impl S3Backend {
                     .build()?;
                 let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
                     .paths(paths)
-                    .caller_reference(format!(
-                        "{}_{}",
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .expect("System time went backwards")
-                            .as_millis(),
-                        chunk_idx,
-                    ))
+                    .caller_reference(
+                        self.invalidation_counter
+                            .fetch_add(1, Ordering::Relaxed)
+                            .to_string(),
+                    )
                     .build()?;
                 cloudfront_client
                     .create_invalidation()
