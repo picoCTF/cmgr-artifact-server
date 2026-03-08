@@ -279,7 +279,9 @@ impl S3Backend {
             return Ok(());
         }
         if let Some(cloudfront_client) = self.cloudfront_client.as_ref() {
-            for chunk in builds.chunks(CLOUDFRONT_MAX_WILDCARD_PATHS) {
+            // Deduplicate build IDs to avoid wasting CloudFront invalidation paths
+            let unique_builds: Vec<&String> = builds.iter().collect::<HashSet<_>>().into_iter().collect();
+            for chunk in unique_builds.chunks(CLOUDFRONT_MAX_WILDCARD_PATHS) {
                 let items: Vec<String> = chunk
                     .iter()
                     .map(|build| format!("/{}{}*", self.path_prefix, build))
