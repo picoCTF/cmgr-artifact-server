@@ -296,13 +296,14 @@ impl S3Backend {
                     .set_items(Some(items))
                     .quantity(quantity)
                     .build()?;
+                let counter = self.invalidation_counter.fetch_add(1, Ordering::Relaxed);
+                let now_millis = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_millis();
+                let caller_reference = format!("{}-{}", now_millis, counter);
                 let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
                     .paths(paths)
-                    .caller_reference(
-                        self.invalidation_counter
-                            .fetch_add(1, Ordering::Relaxed)
-                            .to_string(),
-                    )
+                    .caller_reference(caller_reference)
                     .build()?;
                 cloudfront_client
                     .create_invalidation()
