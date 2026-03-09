@@ -1,15 +1,20 @@
 use crate::backend::Backend;
 use crate::{BuildEvent, CHECKSUM_FILENAME, get_cache_dir_checksum};
 use aws_config::BehaviorVersion;
+use aws_config::retry::RetryConfig;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
-use log::{debug, info};
+use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Receiver;
 use walkdir::WalkDir;
+
+/// Maximum number of wildcard invalidation paths allowed per CloudFront invalidation request.
+const CLOUDFRONT_MAX_WILDCARD_PATHS: usize = 15;
 
 #[derive(Debug)]
 pub(crate) struct S3Backend {
@@ -18,6 +23,7 @@ pub(crate) struct S3Backend {
     cloudfront_distribution: Option<String>,
     s3_client: aws_sdk_s3::Client,
     cloudfront_client: Option<aws_sdk_cloudfront::Client>,
+    invalidation_counter: AtomicU64,
 }
 
 impl Backend for S3Backend {
@@ -39,8 +45,12 @@ impl Backend for S3Backend {
         }
         debug!("Normalized path prefix: \"{}\"", path_prefix);
 
-        // Create S3 and CloudFront clients
-        let shared_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+        // Create S3 and CloudFront clients with adaptive retry to handle rate limiting
+        let retry_config = RetryConfig::adaptive().with_max_attempts(10);
+        let shared_config = aws_config::defaults(BehaviorVersion::latest())
+            .retry_config(retry_config)
+            .load()
+            .await;
         let s3_client = aws_sdk_s3::Client::new(&shared_config);
         let cloudfront_client = options
             .get("cloudfront-distribution")
@@ -54,6 +64,7 @@ impl Backend for S3Backend {
                 .map(|v| v.to_string()),
             s3_client,
             cloudfront_client,
+            invalidation_counter: AtomicU64::new(0),
         };
         Ok(backend)
     }
@@ -75,26 +86,75 @@ impl Backend for S3Backend {
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
         while let Some(event) = rx.recv().await {
-            match event {
-                BuildEvent::Create(build) => {
-                    info!("Uploading artifacts for build {}", &build);
-                    self.upload_cache_dir(cache_dir, &build).await?;
-                }
-                BuildEvent::Update(build) => {
-                    info!("Updating artifacts for build {}", &build);
-                    self.delete_bucket_dir(&build).await?;
-                    self.upload_cache_dir(cache_dir, &build).await?;
-                    if (self.cloudfront_client).is_some() {
-                        self.create_invalidation(&build).await?;
+            let mut events = vec![event];
+            // Drain any additional pending events for batching, but cap per-iteration drain
+            let mut drained = 0usize;
+            while drained < 1024 {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        events.push(event);
+                        drained += 1;
+                    }
+                    Err(_) => {
+                        break;
                     }
                 }
-                BuildEvent::Delete(build) => {
-                    info!("Removing artifacts for build {}", &build);
-                    self.delete_bucket_dir(&build).await?;
-                    if (self.cloudfront_client).is_some() {
-                        self.create_invalidation(&build).await?;
+            }
+
+            let mut invalidation_builds: Vec<String> = Vec::new();
+            let mut processing_error: Option<anyhow::Error> = None;
+            for event in events {
+                match event {
+                    BuildEvent::Create(build) => {
+                        info!("Uploading artifacts for build {}", &build);
+                        if let Err(e) = self.upload_cache_dir(cache_dir, &build).await {
+                            processing_error = Some(e);
+                            break;
+                        }
+                    }
+                    BuildEvent::Update(build) => {
+                        info!("Updating artifacts for build {}", &build);
+                        if let Err(e) = self.delete_bucket_dir(&build).await {
+                            processing_error = Some(e);
+                            break;
+                        }
+                        // S3 content changed after delete; capture upload result then
+                        // record the build for invalidation regardless of upload outcome.
+                        let upload_result = self.upload_cache_dir(cache_dir, &build).await;
+                        invalidation_builds.push(build);
+                        if let Err(e) = upload_result {
+                            processing_error = Some(e);
+                            break;
+                        }
+                    }
+                    BuildEvent::Delete(build) => {
+                        info!("Removing artifacts for build {}", &build);
+                        if let Err(e) = self.delete_bucket_dir(&build).await {
+                            processing_error = Some(e);
+                            break;
+                        }
+                        invalidation_builds.push(build);
                     }
                 }
+            }
+
+            // Always attempt to flush invalidations for builds whose S3 content
+            // changed, even if a later operation failed, to avoid serving stale
+            // cached content from CloudFront.
+            if !invalidation_builds.is_empty()
+                && let Err(inv_err) = self.create_invalidation(&invalidation_builds).await
+            {
+                if let Some(proc_err) = processing_error {
+                    error!(
+                        "Additionally failed to flush CloudFront invalidations: {}",
+                        inv_err
+                    );
+                    return Err(proc_err);
+                }
+                return Err(inv_err);
+            }
+            if let Some(e) = processing_error {
+                return Err(e);
             }
         }
         Ok(())
@@ -243,32 +303,45 @@ impl S3Backend {
         Ok(())
     }
 
-    /// Invalidates the specified build's artifact directory path from the CloudFront distribution,
-    /// if one is configured. If no distribution is configured, does nothing.
-    async fn create_invalidation(&self, build: &str) -> Result<(), anyhow::Error> {
+    /// Invalidates the specified builds' artifact directory paths from the CloudFront distribution,
+    /// if one is configured. If no distribution is configured or the list is empty, does nothing.
+    /// Paths are batched into requests of up to CLOUDFRONT_MAX_WILDCARD_PATHS wildcard paths each.
+    async fn create_invalidation(&self, builds: &[String]) -> Result<(), anyhow::Error> {
+        if builds.is_empty() {
+            return Ok(());
+        }
         if let Some(cloudfront_client) = self.cloudfront_client.as_ref() {
-            let path = format!("/{}{}*", self.path_prefix, build);
-            debug!("Creating invalidation for path: {}", &path);
-            let paths = aws_sdk_cloudfront::types::Paths::builder()
-                .items(path)
-                .quantity(1)
-                .build()?;
-            let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
-                .paths(paths)
-                .caller_reference(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("System time went backwards")
-                        .as_millis()
-                        .to_string(),
-                )
-                .build()?;
-            cloudfront_client
-                .create_invalidation()
-                .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
-                .invalidation_batch(invalidation_batch)
-                .send()
-                .await?;
+            // Deduplicate build IDs to avoid wasting CloudFront invalidation paths
+            let unique_builds: Vec<&String> =
+                builds.iter().collect::<HashSet<_>>().into_iter().collect();
+            for chunk in unique_builds.chunks(CLOUDFRONT_MAX_WILDCARD_PATHS) {
+                let items: Vec<String> = chunk
+                    .iter()
+                    .map(|build| format!("/{}{}*", self.path_prefix, build))
+                    .collect();
+                let quantity = i32::try_from(items.len())?;
+                debug!(
+                    "Creating invalidation for {} path(s): {:?}",
+                    quantity, &items
+                );
+                let paths = aws_sdk_cloudfront::types::Paths::builder()
+                    .set_items(Some(items))
+                    .quantity(quantity)
+                    .build()?;
+                let counter = self.invalidation_counter.fetch_add(1, Ordering::Relaxed);
+                let now_millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+                let caller_reference = format!("{}-{}", now_millis, counter);
+                let invalidation_batch = aws_sdk_cloudfront::types::InvalidationBatch::builder()
+                    .paths(paths)
+                    .caller_reference(caller_reference)
+                    .build()?;
+                cloudfront_client
+                    .create_invalidation()
+                    .distribution_id(self.cloudfront_distribution.as_ref().unwrap())
+                    .invalidation_batch(invalidation_batch)
+                    .send()
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -350,41 +423,92 @@ impl S3Backend {
             }
         }
 
+        // Collect build IDs that need CloudFront invalidation for batching
+        let mut invalidation_builds: Vec<String> = Vec::new();
+        let mut sync_error: Option<anyhow::Error> = None;
+
         // Ensure that all bucket directories are up to date
         for (build_id, build_cache_dir) in &cache_dirs {
             if bucket_build_ids.contains(build_id) {
-                let bucket_checksum = self.get_bucket_dir_checksum(build_id).await?;
-                if let Some(bucket_checksum) = bucket_checksum
-                    && bucket_checksum == get_cache_dir_checksum(build_cache_dir)?
-                {
+                let bucket_checksum = match self.get_bucket_dir_checksum(build_id).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        sync_error = Some(e);
+                        break;
+                    }
+                };
+                let needs_update = match bucket_checksum {
+                    Some(bc) => match get_cache_dir_checksum(build_cache_dir) {
+                        Ok(local) => bc != local,
+                        Err(e) => {
+                            sync_error = Some(e.into());
+                            break;
+                        }
+                    },
+                    None => true,
+                };
+                if !needs_update {
                     continue;
                 }
                 info!(
                     "Artifacts for build {} are outdated, reuploading",
                     &build_id
                 );
-                self.delete_bucket_dir(build_id).await?;
-                self.upload_cache_dir(cache_dir, build_id).await?;
-                self.create_invalidation(build_id).await?;
+                if let Err(e) = self.delete_bucket_dir(build_id).await {
+                    sync_error = Some(e);
+                    break;
+                }
+                invalidation_builds.push(build_id.clone());
+                if let Err(e) = self.upload_cache_dir(cache_dir, build_id).await {
+                    sync_error = Some(e);
+                    break;
+                }
             } else {
                 info!(
                     "Artifacts for build {} not found in bucket, uploading",
                     &build_id
                 );
-                self.upload_cache_dir(cache_dir, build_id).await?;
+                if let Err(e) = self.upload_cache_dir(cache_dir, build_id).await {
+                    sync_error = Some(e);
+                    break;
+                }
             }
         }
 
         // Remove any bucket directories without a corresponding local cache
-        for build_id in &bucket_build_ids {
-            if !&cache_dirs.contains_key(build_id) {
-                info!(
-                    "Artifacts found in bucket for deleted build {}, removing",
-                    &build_id
-                );
-                self.delete_bucket_dir(build_id).await?;
-                self.create_invalidation(build_id).await?;
+        if sync_error.is_none() {
+            for build_id in &bucket_build_ids {
+                if !&cache_dirs.contains_key(build_id) {
+                    info!(
+                        "Artifacts found in bucket for deleted build {}, removing",
+                        &build_id
+                    );
+                    if let Err(e) = self.delete_bucket_dir(build_id).await {
+                        sync_error = Some(e);
+                        break;
+                    }
+                    invalidation_builds.push(build_id.clone());
+                }
             }
+        }
+
+        // Always attempt to flush invalidations for builds whose S3 content
+        // changed, even if a later operation failed, to avoid serving stale
+        // cached content from CloudFront.
+        if !invalidation_builds.is_empty()
+            && let Err(inv_err) = self.create_invalidation(&invalidation_builds).await
+        {
+            if let Some(s_err) = sync_error {
+                error!(
+                    "Additionally failed to flush CloudFront invalidations: {}",
+                    inv_err
+                );
+                return Err(s_err);
+            }
+            return Err(inv_err);
+        }
+        if let Some(e) = sync_error {
+            return Err(e);
         }
 
         Ok(())
