@@ -141,17 +141,17 @@ impl Backend for S3Backend {
             // Always attempt to flush invalidations for builds whose S3 content
             // changed, even if a later operation failed, to avoid serving stale
             // cached content from CloudFront.
-            if !invalidation_builds.is_empty() {
-                if let Err(inv_err) = self.create_invalidation(&invalidation_builds).await {
-                    if let Some(proc_err) = processing_error {
-                        error!(
-                            "Additionally failed to flush CloudFront invalidations: {}",
-                            inv_err
-                        );
-                        return Err(proc_err);
-                    }
-                    return Err(inv_err);
+            if !invalidation_builds.is_empty()
+                && let Err(inv_err) = self.create_invalidation(&invalidation_builds).await
+            {
+                if let Some(proc_err) = processing_error {
+                    error!(
+                        "Additionally failed to flush CloudFront invalidations: {}",
+                        inv_err
+                    );
+                    return Err(proc_err);
                 }
+                return Err(inv_err);
             }
             if let Some(e) = processing_error {
                 return Err(e);
@@ -495,17 +495,17 @@ impl S3Backend {
         // Always attempt to flush invalidations for builds whose S3 content
         // changed, even if a later operation failed, to avoid serving stale
         // cached content from CloudFront.
-        if !invalidation_builds.is_empty() {
-            if let Err(inv_err) = self.create_invalidation(&invalidation_builds).await {
-                if let Some(s_err) = sync_error {
-                    error!(
-                        "Additionally failed to flush CloudFront invalidations: {}",
-                        inv_err
-                    );
-                    return Err(s_err);
-                }
-                return Err(inv_err);
+        if !invalidation_builds.is_empty()
+            && let Err(inv_err) = self.create_invalidation(&invalidation_builds).await
+        {
+            if let Some(s_err) = sync_error {
+                error!(
+                    "Additionally failed to flush CloudFront invalidations: {}",
+                    inv_err
+                );
+                return Err(s_err);
             }
+            return Err(inv_err);
         }
         if let Some(e) = sync_error {
             return Err(e);
