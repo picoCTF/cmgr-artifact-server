@@ -29,6 +29,6 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 log = "0.4.29"
 notify-debouncer-full = "0.7.0"
 sha2 = "0.10.9"
-tar = "0.4.44"
+tar = "0.4.45"
 tokio = { version = "1.49.0", features = ["full"] }
 walkdir = "2.5.0"
