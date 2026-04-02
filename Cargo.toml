@@ -19,7 +19,7 @@ aws-sdk-cloudfront = "1.112.0"
 aws-sdk-s3 = "1.124.0"
 blake2 = "0.10.6"
 clap = { version = "4.6.0", features = ["cargo"] }
-env_logger = "0.11.9"
+env_logger = "0.11.10"
 flate2 = "1.1.9"
 hex = "0.4.3"
 http = "1.4.0"
