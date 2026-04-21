@@ -258,7 +258,8 @@ fn is_artifact_tarball(path: &Path, digest_salt: Option<&str>) -> Option<BuildId
     let build_id = filename.trim_end_matches(".tar.gz");
     let build_id = match digest_salt {
         Some(ref salt) => {
-            let digest = sha2::Sha256::digest(format!("{build_id}:{salt}")).encode_hex();
+            let digest =
+                <sha2::Sha256 as sha2::Digest>::digest(format!("{build_id}:{salt}")).encode_hex();
             debug!("digested build ID {build_id} -> {digest}");
             digest
         }
