@@ -2,8 +2,10 @@ version: 2
 updates:
   - package-ecosystem: "cargo"
     directory: "/"
+    cooldown:
+      default-days: 7    
     schedule:
-      interval: "monthly"
+      interval: "weekly"
     labels:
       - "dependencies"
     groups:
@@ -12,5 +14,7 @@ updates:
           - "aws-*"
   - package-ecosystem: "github-actions"
     directory: "/"
+    cooldown:
+      default-days: 7    
     schedule:
-      interval: "monthly"
+      interval: "weekly"
