@@ -418,12 +418,12 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "h2 0.3.27",
- "h2 0.4.13",
+ "h2 0.4.14",
  "http 0.2.12",
  "http 1.4.1",
  "http-body 0.4.6",
  "hyper 0.14.32",
- "hyper 1.9.0",
+ "hyper 1.10.1",
  "hyper-rustls 0.24.2",
  "hyper-rustls 0.27.9",
  "hyper-util",
@@ -741,7 +741,7 @@ dependencies = [
  "flate2",
  "hex",
  "http 1.4.1",
- "hyper 1.9.0",
+ "hyper 1.10.1",
  "hyper-staticfile",
  "hyper-util",
  "log",
@@ -1231,9 +1231,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f44da3a8150a6703ed5d34e164b875fd14c2cdab9af1252a9a1020bde2bdc54"
+checksum = "171fefbc92fe4a4de27e0698d6a5b392d6a0e333506bc49133760b3bcf948733"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1397,15 +1397,15 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.9.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
+checksum = "55281c53a1894c864990125767da440a4e630446785086f52523b20033b74498"
 dependencies = [
  "atomic-waker",
  "bytes",
  "futures-channel",
  "futures-core",
- "h2 0.4.13",
+ "h2 0.4.14",
  "http 1.4.1",
  "http-body 1.0.1",
  "httparse",
@@ -1439,7 +1439,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
 dependencies = [
  "http 1.4.1",
- "hyper 1.9.0",
+ "hyper 1.10.1",
  "hyper-util",
  "rustls 0.23.38",
  "rustls-native-certs",
@@ -1458,7 +1458,7 @@ dependencies = [
  "http 1.4.1",
  "http-range",
  "httpdate",
- "hyper 1.9.0",
+ "hyper 1.10.1",
  "mime_guess",
  "percent-encoding",
  "rand",
@@ -1479,7 +1479,7 @@ dependencies = [
  "futures-util",
  "http 1.4.1",
  "http-body 1.0.1",
- "hyper 1.9.0",
+ "hyper 1.10.1",
  "ipnet",
  "libc",
  "percent-encoding",
