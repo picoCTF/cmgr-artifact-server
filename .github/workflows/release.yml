@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Create release
         id: create-release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
   build:
     name: Build release binaries
     runs-on: ${{ matrix.runner-os }}
@@ -40,8 +40,9 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v6
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # v1.94.1
         with:
+          toolchain: stable             
           targets: ${{ matrix.rustc-target }}
       - name: Build
         run: |
@@ -55,6 +56,6 @@ jobs:
         env:
           suffix: ${{ matrix.binary-suffix }}
       - name: Upload tarball
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           files: out/*.tar.gz
