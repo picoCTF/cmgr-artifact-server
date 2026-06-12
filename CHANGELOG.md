@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v2.2.3
+
+- Add retry/backoff for S3 requests, batched CloudFront invalidations https://github.com/picoCTF/cmgr-artifact-server/pull/343
+- Bump deps
+
 ## v2.2.0
 
 - Linux binaries are now built on Ubuntu 22.04 runners (rather than 24.04) for compability with a wider range of glibc versions.
