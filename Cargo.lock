@@ -436,7 +436,7 @@ dependencies = [
  "http 1.4.2",
  "http-body 0.4.6",
  "hyper 0.14.32",
- "hyper 1.10.1",
+ "hyper 1.11.0",
  "hyper-rustls 0.24.2",
  "hyper-rustls 0.27.9",
  "hyper-util",
@@ -754,7 +754,7 @@ dependencies = [
  "flate2",
  "hex",
  "http 1.4.2",
- "hyper 1.10.1",
+ "hyper 1.11.0",
  "hyper-staticfile",
  "hyper-util",
  "log",
@@ -1410,9 +1410,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.10.1"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55281c53a1894c864990125767da440a4e630446785086f52523b20033b74498"
+checksum = "d22053281f852e11534f5198498373cbb59295120a20771d90f7ed1897490a72"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1452,7 +1452,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
 dependencies = [
  "http 1.4.2",
- "hyper 1.10.1",
+ "hyper 1.11.0",
  "hyper-util",
  "rustls 0.23.38",
  "rustls-native-certs",
@@ -1471,7 +1471,7 @@ dependencies = [
  "http 1.4.2",
  "http-range",
  "httpdate",
- "hyper 1.10.1",
+ "hyper 1.11.0",
  "mime_guess",
  "percent-encoding",
  "rand",
@@ -1492,7 +1492,7 @@ dependencies = [
  "futures-util",
  "http 1.4.2",
  "http-body 1.0.1",
- "hyper 1.10.1",
+ "hyper 1.11.0",
  "ipnet",
  "libc",
  "percent-encoding",
