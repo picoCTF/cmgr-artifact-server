@@ -68,9 +68,9 @@ fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
 /// Panics if the conversion fails.
 fn to_filename_str(path: &Path) -> &str {
     path.file_name()
-        .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path))
+        .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", path))
         .to_str()
-        .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path))
+        .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", path))
 }
 
 /// Performs a full synchronization of the cache and artifact directories.

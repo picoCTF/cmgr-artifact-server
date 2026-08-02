@@ -106,14 +106,14 @@ impl Backend for S3Backend {
             for event in events {
                 match event {
                     BuildEvent::Create(build) => {
-                        info!("Uploading artifacts for build {}", &build);
+                        info!("Uploading artifacts for build {}", build);
                         if let Err(e) = self.upload_cache_dir(cache_dir, &build).await {
                             processing_error = Some(e);
                             break;
                         }
                     }
                     BuildEvent::Update(build) => {
-                        info!("Updating artifacts for build {}", &build);
+                        info!("Updating artifacts for build {}", build);
                         if let Err(e) = self.delete_bucket_dir(&build).await {
                             processing_error = Some(e);
                             break;
@@ -128,7 +128,7 @@ impl Backend for S3Backend {
                         }
                     }
                     BuildEvent::Delete(build) => {
-                        info!("Removing artifacts for build {}", &build);
+                        info!("Removing artifacts for build {}", build);
                         if let Err(e) = self.delete_bucket_dir(&build).await {
                             processing_error = Some(e);
                             break;
@@ -174,7 +174,7 @@ impl S3Backend {
         debug!("Testing PutObject");
         const TEST_BODY: &[u8] = "test contents".as_bytes();
         let body = ByteStream::from_static(TEST_BODY);
-        let test_filename = format!("{}{}", &self.path_prefix, "iam_test");
+        let test_filename = format!("{}{}", self.path_prefix, "iam_test");
         self.s3_client
             .put_object()
             .bucket(&self.bucket)
@@ -204,7 +204,7 @@ impl S3Backend {
 
         if let Some(cloudfront_client) = self.cloudfront_client.as_ref() {
             debug!("Testing CreateInvalidation");
-            let path = format!("/{}", &test_filename);
+            let path = format!("/{}", test_filename);
             let batch = InvalidationBatch::builder()
                 .paths(Paths::builder().items(path).quantity(1).build()?)
                 .caller_reference(
@@ -239,15 +239,17 @@ impl S3Backend {
             let mut upload_path = PathBuf::from(&self.path_prefix);
             upload_path.push(build);
             upload_path.push(relative_path);
-            debug!("Uploading object: {}", &upload_path.display());
+            debug!("Uploading object: {}", upload_path.display());
             let file = tokio::fs::File::open(&entry.path()).await?;
             let body = ByteStream::read_from().file(file).build().await?;
             self.s3_client
                 .put_object()
                 .bucket(&self.bucket)
-                .key(upload_path.to_str().unwrap_or_else(|| {
-                    panic!("Failed to convert path {:?} to utf-8", &upload_path)
-                }))
+                .key(
+                    upload_path.to_str().unwrap_or_else(|| {
+                        panic!("Failed to convert path {:?} to utf-8", upload_path)
+                    }),
+                )
                 .body(body)
                 .send()
                 .await?;
@@ -280,7 +282,7 @@ impl S3Backend {
             return Ok(());
         }
         for key in &obj_keys {
-            debug!("Deleting object: {}", &key);
+            debug!("Deleting object: {}", key);
         }
         let delete_body = aws_sdk_s3::types::Delete::builder()
             .set_objects(Some(
@@ -322,7 +324,7 @@ impl S3Backend {
                 let quantity = i32::try_from(items.len())?;
                 debug!(
                     "Creating invalidation for {} path(s): {:?}",
-                    quantity, &items
+                    quantity, items
                 );
                 let paths = aws_sdk_cloudfront::types::Paths::builder()
                     .set_items(Some(items))
@@ -348,7 +350,7 @@ impl S3Backend {
 
     /// Retrieves a build's artifact directory checksum from the S3 bucket, if it exists.
     async fn get_bucket_dir_checksum(&self, build: &str) -> Result<Option<Vec<u8>>, anyhow::Error> {
-        let checksum_path = format!("{}{}/{}", &self.path_prefix, build, CHECKSUM_FILENAME);
+        let checksum_path = format!("{}{}/{}", self.path_prefix, build, CHECKSUM_FILENAME);
         let resp = self
             .s3_client
             .get_object()
@@ -374,9 +376,9 @@ impl S3Backend {
             if path_buf.is_dir() {
                 let dir_name = path_buf
                     .file_name()
-                    .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", &path_buf))
+                    .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", path_buf))
                     .to_str()
-                    .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", &path_buf));
+                    .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", path_buf));
                 cache_dirs.insert(dir_name.into(), path_buf);
             }
         }
@@ -450,10 +452,7 @@ impl S3Backend {
                 if !needs_update {
                     continue;
                 }
-                info!(
-                    "Artifacts for build {} are outdated, reuploading",
-                    &build_id
-                );
+                info!("Artifacts for build {} are outdated, reuploading", build_id);
                 if let Err(e) = self.delete_bucket_dir(build_id).await {
                     sync_error = Some(e);
                     break;
@@ -466,7 +465,7 @@ impl S3Backend {
             } else {
                 info!(
                     "Artifacts for build {} not found in bucket, uploading",
-                    &build_id
+                    build_id
                 );
                 if let Err(e) = self.upload_cache_dir(cache_dir, build_id).await {
                     sync_error = Some(e);
@@ -481,7 +480,7 @@ impl S3Backend {
                 if !&cache_dirs.contains_key(build_id) {
                     info!(
                         "Artifacts found in bucket for deleted build {}, removing",
-                        &build_id
+                        build_id
                     );
                     if let Err(e) = self.delete_bucket_dir(build_id).await {
                         sync_error = Some(e);

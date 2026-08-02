@@ -78,10 +78,10 @@ async fn main() -> Result<(), anyhow::Error> {
     // Determine artifact directory
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
     let artifact_dir = PathBuf::from(&artifact_dir);
-    debug!("Determined artifact dir: {}", &artifact_dir.display());
+    debug!("Determined artifact dir: {}", artifact_dir.display());
     let mut cache_dir = artifact_dir.clone();
     cache_dir.push(".artifact_server_cache");
-    debug!("Determined cache dir: {}", &cache_dir.display());
+    debug!("Determined cache dir: {}", cache_dir.display());
 
     // Ensure cache directory exists
     fs::create_dir_all(&cache_dir)?;

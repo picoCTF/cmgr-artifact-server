@@ -72,7 +72,7 @@ impl Backend for SelfhostedBackend {
 
         let addr: SocketAddr = self.address.parse()?;
         let listener = TcpListener::bind(addr).await?;
-        info!("Starting server ({}). Press CTRL-C to exit.", &self.address);
+        info!("Starting server ({}). Press CTRL-C to exit.", self.address);
         loop {
             let (stream, _) = listener.accept().await?;
             let static_ = static_.clone();
