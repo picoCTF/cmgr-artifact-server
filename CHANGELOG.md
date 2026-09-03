@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v2.3.0
+
+- The `linux_arm64` release binary is now built natively on an arm64 runner. Earlier releases mislabeled this tarball: it actually contained a `linux_amd64` binary.
+- The `darwin_amd64` tarball is no longer published. Earlier releases' `darwin_amd64` tarballs actually contained `darwin_arm64` binaries.
+- Linux binaries are now built on Ubuntu 24.04 runners (rather than 22.04). They require glibc 2.39 or newer on the host (e.g. Ubuntu 24.04, Debian 13, RHEL 10). Previous releases required glibc 2.34 and also ran on Ubuntu 22.04, Debian 12, RHEL 9, and Amazon Linux 2023.
+- Bump deps
 
 ## v2.2.3
 

@@ -23,27 +23,23 @@ jobs:
     strategy:
       matrix:
         include:
-          # Match Go/cmgr convention for suffixes
-          - runner-os: ubuntu-22.04
-            rustc-target: "x86_64-unknown-linux-gnu"
+          # Match Go/cmgr convention for suffixes. Each binary is built natively
+          # on a runner of the target architecture.
+          - runner-os: ubuntu-24.04
             binary-suffix: "linux_amd64"
-          - runner-os: ubuntu-22.04
-            rustc-target: "aarch64-unknown-linux-gnu"
+          - runner-os: ubuntu-24.04-arm
             binary-suffix: "linux_arm64"
           - runner-os: macos-latest
-            rustc-target: "x86_64-apple-darwin"
-            binary-suffix: "darwin_amd64"
-          - runner-os: macos-latest
-            rustc-target: "aarch64-apple-darwin"
             binary-suffix: "darwin_arm64"
     steps:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # v1.94.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          toolchain: stable             
-          targets: ${{ matrix.rustc-target }}
+          toolchain: stable
+          cache: false
+          rustflags: ""
       - name: Build
         run: |
           cargo build --release
