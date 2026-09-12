@@ -500,51 +500,70 @@ impl S3Backend {
         Ok(())
     }
 
-    /// Deletes the specified build's artifact directory from the S3 bucket.
+    /// Deletes everything under a directory in the S3 bucket.
+    ///
+    /// Paginated, because the directory is not always one build's. The
+    /// startup sweep hands this whole namespaces: a destination that no
+    /// longer builds has no local directory to mark it a namespace, so it
+    /// arrives here as one orphan holding every build of a retired event. A
+    /// single listing stops at a thousand objects, and stopping there would
+    /// report a retirement that had half happened -- some builds gone, others
+    /// left without the checksum that would have had them re-uploaded.
     async fn delete_bucket_dir(&self, build: &str) -> Result<(), anyhow::Error> {
         let prefix = format!("{}{}/", self.path_prefix, build);
-        let resp = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .prefix(prefix)
-            .send()
-            .await?;
-        // Note: this assumes that a build will never have more than 1000 artifacts (the limit of a
-        // single GetObjectsV2 response or DeleteObjects request). To handle over 1000 artifacts per
-        // build, it would be necessary to check .is_truncated() and send additional requests using
-        // continuation tokens.
-        let obj_keys: Vec<String> = resp
-            .contents
-            .unwrap_or_default()
-            .into_iter()
-            .map(|o| o.key.unwrap())
-            .collect();
-        if obj_keys.is_empty() {
-            // DeleteObjects calls fail if made with an empty object array, so return early
-            return Ok(());
+        let mut token: Option<String> = None;
+        loop {
+            let mut request = self
+                .s3_client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(&prefix);
+            if let Some(token) = token.take() {
+                request = request.continuation_token(token);
+            }
+            let resp = request.send().await?;
+            // A listing returns at most a thousand objects and DeleteObjects
+            // accepts at most a thousand keys, so a page is always one
+            // request.
+            let obj_keys: Vec<String> = resp
+                .contents
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|o| o.key)
+                .collect();
+            if !obj_keys.is_empty() {
+                for key in &obj_keys {
+                    debug!("Deleting object: {}", key);
+                }
+                let delete_body = aws_sdk_s3::types::Delete::builder()
+                    .set_objects(Some(
+                        obj_keys
+                            .into_iter()
+                            .map(|k| {
+                                aws_sdk_s3::types::ObjectIdentifier::builder()
+                                    .key(k)
+                                    .build()
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ))
+                    .build()?;
+                self.s3_client
+                    .delete_objects()
+                    .bucket(&self.bucket)
+                    .delete(delete_body)
+                    .send()
+                    .await?;
+            }
+            // Deleting as it goes does not disturb the walk: a continuation
+            // token names the key to resume after, not an offset into a list.
+            if !resp.is_truncated.is_some_and(|t| t) {
+                break;
+            }
+            token = resp.next_continuation_token;
+            if token.is_none() {
+                break;
+            }
         }
-        for key in &obj_keys {
-            debug!("Deleting object: {}", key);
-        }
-        let delete_body = aws_sdk_s3::types::Delete::builder()
-            .set_objects(Some(
-                obj_keys
-                    .into_iter()
-                    .map(|k| {
-                        aws_sdk_s3::types::ObjectIdentifier::builder()
-                            .key(k)
-                            .build()
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            ))
-            .build()?;
-        self.s3_client
-            .delete_objects()
-            .bucket(&self.bucket)
-            .delete(delete_body)
-            .send()
-            .await?;
         Ok(())
     }
 
@@ -860,6 +879,21 @@ mod tests {
         ))
     }
 
+    /// A ListObjectsV2 response naming objects, with more to come.
+    fn lists_objects_truncated(keys: &[&str], next_token: &str) -> ReplayEvent {
+        let entries: String = keys
+            .iter()
+            .map(|k| format!("<Contents><Key>{k}</Key></Contents>"))
+            .collect();
+        responds(&format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+             <Name>bucket</Name><IsTruncated>true</IsTruncated>\
+             <NextContinuationToken>{next_token}</NextContinuationToken>\
+             {entries}</ListBucketResult>"
+        ))
+    }
+
     /// A DeleteObjects response.
     fn deleted() -> ReplayEvent {
         responds(
@@ -1143,6 +1177,49 @@ mod tests {
             requests.iter().any(|r| r.starts_with("POST /arts/?delete")),
             "the stale build was not deleted: {requests:?}"
         );
+    }
+
+    /// A removal does not stop at the first thousand objects. What is being
+    /// removed is not always one build: a destination that no longer builds
+    /// has no local directory to mark it a namespace, so the sweep hands this
+    /// the whole retired event. Stopping at a page there reports a retirement
+    /// that half happened -- some builds gone, others left without the
+    /// checksum that would have had them re-uploaded, and nothing to say so.
+    #[tokio::test]
+    async fn a_removal_follows_the_listing_to_its_end() {
+        let http = StaticReplayClient::new(vec![
+            lists_objects_truncated(&["c_retired/7/a", "c_retired/7/b"], "page-2"),
+            deleted(),
+            lists_objects(&["c_retired/8/a"]),
+            deleted(),
+        ]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend.delete_bucket_dir("c_retired").await.unwrap();
+
+        let requests = requests(&http);
+        assert_eq!(
+            requests.iter().filter(|r| r.contains("?delete")).count(),
+            2,
+            "the second page was never deleted: {requests:?}"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.contains("continuation-token=page-2")),
+            "the listing was not resumed: {requests:?}"
+        );
+    }
+
+    /// An empty directory is not a DeleteObjects call, which fails when given
+    /// no keys. The sweep reaches here for anything the bucket lists, and a
+    /// build whose objects have already gone is not an error.
+    #[tokio::test]
+    async fn removing_nothing_deletes_nothing() {
+        let http = StaticReplayClient::new(vec![lists_objects(&[])]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend.delete_bucket_dir("7").await.unwrap();
+
+        assert_eq!(requests(&http).len(), 1);
     }
 
     /// An ordinary entry, at the root of the archive and nested, keeps its
