@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Artifact tarballs in a subdirectory of `CMGR_ARTIFACT_DIR` are now published under a matching path prefix, so that one server can publish the artifacts of the several orchestrators a [cork](https://github.com/CyLabAcademy/challenge-orchestrator) build plane builds for. Only subdirectories carrying a `.cork-artifact-namespace` marker are treated this way; every other subdirectory is ignored, as before. A tarball in `CMGR_ARTIFACT_DIR` itself is unaffected.
+- The `S3` backend's startup removal of orphaned bucket directories is now skipped when the local artifact directory holds no builds at all, and can be disabled with `-o prune-orphans=false`. An empty artifact directory means the host has not built yet rather than that every build was deleted, and sweeping there emptied the bucket of a running event. Deletions seen while the server is running are propagated as before and do not depend on that pass.
 
 ## v2.3.0
 

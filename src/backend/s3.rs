@@ -4,7 +4,7 @@ use aws_config::BehaviorVersion;
 use aws_config::retry::RetryConfig;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,10 +15,57 @@ use walkdir::WalkDir;
 /// Maximum number of wildcard invalidation paths allowed per CloudFront invalidation request.
 const CLOUDFRONT_MAX_WILDCARD_PATHS: usize = 15;
 
+/// Whether the startup synchronization should remove bucket directories that
+/// have no local artifact, and if not, why not.
+#[derive(Debug, PartialEq, Eq)]
+enum OrphanSweep {
+    Run,
+    Skip(&'static str),
+}
+
+/// Decides whether to run the sweep.
+///
+/// It is a reconciliation, not the mechanism by which deletions propagate: a
+/// removal seen while the server is running is published as it happens
+/// (BuildEvent::Delete). All the sweep adds is catching up on removals that
+/// happened while it was not running -- so declining to run it is cheap, and
+/// running it wrongly is not.
+///
+/// It is declined when there is no local artifact at all. An empty artifact
+/// directory is not the statement "every build was deleted"; it is a machine
+/// that has not built yet -- a fresh disk, a restored host, a build plane
+/// brought up on demand -- and sweeping there empties the bucket of an event
+/// that is still running. The skipped sweep costs one reconciliation: the
+/// builds that follow announce themselves, and the next start with a
+/// populated cache catches whatever is genuinely stale.
+///
+/// A partial cache is not treated as empty, and deliberately so: this only
+/// rules out the case that is unambiguous. Where the artifact directory is
+/// not the durable record of what exists, prune-orphans=false is the answer.
+fn orphan_sweep(prune_orphans: bool, local_builds: usize, bucket_builds: usize) -> OrphanSweep {
+    if !prune_orphans {
+        return OrphanSweep::Skip("removal is disabled (prune-orphans=false)");
+    }
+    if local_builds == 0 && bucket_builds > 0 {
+        return OrphanSweep::Skip(
+            "this host has no local artifacts at all, which means it has not built yet rather \
+             than that every build was deleted",
+        );
+    }
+    OrphanSweep::Run
+}
+
 #[derive(Debug)]
 pub(crate) struct S3Backend {
     bucket: String,
     path_prefix: String,
+    /// Whether the startup sweep removes bucket directories with no local
+    /// cache. On by default, as it always was. Turned off where the artifact
+    /// directory is not the durable record of what exists -- a build plane
+    /// that is brought up on demand, or whose disk does not outlive it --
+    /// since there the local cache is not evidence that anything was deleted.
+    /// Removals seen while running are propagated either way.
+    prune_orphans: bool,
     cloudfront_distribution: Option<String>,
     s3_client: aws_sdk_s3::Client,
     cloudfront_client: Option<aws_sdk_cloudfront::Client>,
@@ -55,9 +102,19 @@ impl Backend for S3Backend {
             .get("cloudfront-distribution")
             .map(|_| aws_sdk_cloudfront::Client::new(&shared_config));
 
+        let prune_orphans = match options.get("prune-orphans").map(String::as_str) {
+            None | Some("true") => true,
+            Some("false") => false,
+            Some(other) => anyhow::bail!(
+                "backend option \"prune-orphans\" must be \"true\" or \"false\", not {other:?}"
+            ),
+        };
+        debug!("Orphan removal on startup: {}", prune_orphans);
+
         let backend = Self {
             bucket,
             path_prefix,
+            prune_orphans,
             cloudfront_distribution: options
                 .get("cloudfront-distribution")
                 .map(|v| v.to_string()),
@@ -472,8 +529,24 @@ impl S3Backend {
             }
         }
 
-        // Remove any bucket directories without a corresponding local cache
-        if sync_error.is_none() {
+        // Remove any bucket directories without a corresponding local cache,
+        // unless something says not to (see OrphanSweep).
+        let sweep = match sync_error {
+            Some(_) => OrphanSweep::Skip("an earlier step of this synchronization failed"),
+            None => orphan_sweep(self.prune_orphans, cache_dirs.len(), bucket_build_ids.len()),
+        };
+        if let OrphanSweep::Skip(why) = sweep {
+            let orphans = bucket_build_ids
+                .iter()
+                .filter(|id| !cache_dirs.contains_key(*id))
+                .count();
+            if orphans > 0 {
+                warn!(
+                    "Not removing {orphans} bucket directory (or directories) with no local \
+                     artifact: {why}. Nothing has been removed from the bucket."
+                );
+            }
+        } else {
             for build_id in &bucket_build_ids {
                 if !&cache_dirs.contains_key(build_id) {
                     info!(
@@ -509,5 +582,60 @@ impl S3Backend {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ordinary case: some builds locally, some in the bucket, and the
+    /// ones the bucket has that this host does not are stale.
+    #[test]
+    fn a_populated_host_sweeps() {
+        assert_eq!(orphan_sweep(true, 12, 14), OrphanSweep::Run);
+    }
+
+    /// The case this guard exists for. A host with nothing local has not
+    /// built yet -- a fresh disk, a restored machine, a build plane brought
+    /// up on demand -- and sweeping there would empty the bucket of an event
+    /// that is still running. Nothing about an empty artifact directory says
+    /// the builds were deleted.
+    #[test]
+    fn a_host_with_nothing_local_does_not_sweep() {
+        let OrphanSweep::Skip(why) = orphan_sweep(true, 0, 400) else {
+            panic!("a host with no local artifacts swept a bucket holding 400 builds");
+        };
+        assert!(why.contains("not built yet"), "unhelpful reason: {why}");
+    }
+
+    /// Nothing local and nothing in the bucket is not the dangerous case,
+    /// and is left to the sweep so that the empty-cache path is only ever
+    /// taken when it actually prevents something.
+    #[test]
+    fn an_empty_bucket_is_not_the_guarded_case() {
+        assert_eq!(orphan_sweep(true, 0, 0), OrphanSweep::Run);
+    }
+
+    /// A partial cache still sweeps. Only the unambiguous case is ruled out
+    /// here; a host whose artifact directory is not the durable record of
+    /// what exists turns the pass off instead.
+    #[test]
+    fn a_partial_cache_still_sweeps() {
+        assert_eq!(orphan_sweep(true, 1, 400), OrphanSweep::Run);
+    }
+
+    /// Disabled means disabled, whatever is or is not on disk.
+    #[test]
+    fn prune_orphans_false_never_sweeps() {
+        for (local, bucket) in [(12, 14), (0, 400), (0, 0), (5, 5)] {
+            let OrphanSweep::Skip(why) = orphan_sweep(false, local, bucket) else {
+                panic!("swept with prune-orphans=false ({local} local, {bucket} in bucket)");
+            };
+            assert!(
+                why.contains("prune-orphans=false"),
+                "unhelpful reason: {why}"
+            );
+        }
     }
 }

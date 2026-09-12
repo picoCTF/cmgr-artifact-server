@@ -152,3 +152,19 @@ Accordingly, any client applications that generate URLs served by `cmgr-artifact
 | bucket | yes | S3 bucket name |
 | path-prefix | no | Slash-delimited path prefix to use when uploading artifacts. |
 | cloudfront-distribution | no | CloudFront distribution ID. If specified, will automatically create invalidations when artifacts are updated. Uses `path-prefix` if set (assumes distribution's origin path is the bucket root). |
+| prune-orphans | no | Whether the startup synchronization removes bucket directories that have no local artifact. Defaults to `true`. See [orphan removal](#orphan-removal). |
+
+#### Orphan removal
+
+On startup, artifacts in the bucket with no corresponding local artifact are removed, so that
+builds deleted while this was not running do not stay published. Deletions that happen *while* it
+is running are propagated as they occur and do not depend on this pass.
+
+Two safeguards, because this pass is destructive:
+
+- If the local artifact directory holds **no** builds at all while the bucket holds some, nothing
+  is removed and a warning is logged. An empty artifact directory means the host has not built
+  yet — a fresh disk, a restored machine, a build server brought up on demand — and is not the
+  statement that every build was deleted.
+- `-o prune-orphans=false` disables the pass entirely. Use it where the artifact directory is not
+  the durable record of what exists, such as a build server whose disk does not outlive it.
