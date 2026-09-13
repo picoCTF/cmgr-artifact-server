@@ -4,7 +4,9 @@
 
 **Breaking.** The `S3` backend no longer unpacks artifact tarballs to local disk. Artifacts published to a bucket are identical, but `.artifact_server_cache` now holds only a checksum per build rather than a copy of every artifact, so a host using this backend needs far less disk. The `selfhosted` backend is unchanged and still unpacks, since it serves those files directly.
 
-Upgrading an existing `S3` host is safe and needs no migration: the unpacked copies are cleared as each build is next synchronized, and no object key changes. Downgrading to v2 re-unpacks them.
+Upgrading an existing `S3` host is safe and needs no migration: no object key changes, and the unpacked copies are cleared on the first startup synchronization, whether or not a build has changed since. Changing a host's backend in either direction is handled the same way — the cache is rebuilt to hold what the backend it is now running needs.
+
+Downgrading to v2 needs one manual step: **delete `.artifact_server_cache` before starting v2**. v2 decides a build is current from the tarball's checksum alone, which a cache written by this version matches while holding none of the files v2 expects to publish, so it would upload nothing for every build already in the cache. Deleting the directory makes v2 rebuild it.
 
 Also in this release:
 

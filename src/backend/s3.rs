@@ -547,12 +547,33 @@ impl S3Backend {
                             .collect::<Result<Vec<_>, _>>()?,
                     ))
                     .build()?;
-                self.s3_client
+                let resp = self
+                    .s3_client
                     .delete_objects()
                     .bucket(&self.bucket)
                     .delete(delete_body)
                     .send()
                     .await?;
+                // DeleteObjects refuses keys individually and still answers
+                // 200. Unread, a retirement that was partly denied -- one
+                // object under a bucket policy, say -- reports as complete,
+                // and the walk resumes past the keys that are still there.
+                if let Some(errors) = resp.errors
+                    && !errors.is_empty()
+                {
+                    for error in &errors {
+                        error!(
+                            "Could not delete {}: {} {}",
+                            error.key().unwrap_or("(unnamed object)"),
+                            error.code().unwrap_or("(no code)"),
+                            error.message().unwrap_or_default()
+                        );
+                    }
+                    anyhow::bail!(
+                        "{} object(s) under {prefix} could not be deleted",
+                        errors.len()
+                    );
+                }
             }
             // Deleting as it goes does not disturb the walk: a continuation
             // token names the key to resume after, not an offset into a list.
@@ -1207,6 +1228,32 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("continuation-token=page-2")),
             "the listing was not resumed: {requests:?}"
+        );
+    }
+
+    /// A refused key fails the removal rather than passing as done.
+    /// DeleteObjects answers 200 and names what it would not delete, so
+    /// unread, a retirement denied by a bucket policy reports as complete
+    /// and the objects stay published.
+    #[tokio::test]
+    async fn a_refused_key_is_not_a_successful_removal() {
+        let http = StaticReplayClient::new(vec![
+            lists_objects(&["7/BinEx101.c"]),
+            responds(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+                 <DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+                 <Error><Key>7/BinEx101.c</Key><Code>AccessDenied</Code>\
+                 <Message>Access Denied</Message></Error></DeleteResult>",
+            ),
+        ]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        let err = backend
+            .delete_bucket_dir("7")
+            .await
+            .expect_err("a refused deletion passed as done");
+        assert!(
+            err.to_string().contains("could not be deleted"),
+            "unhelpful error: {err}"
         );
     }
 

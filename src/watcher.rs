@@ -70,13 +70,18 @@ fn extract_to(cache_dir: &Path, tarball: &Path, extract: bool) -> Result<(), std
     Ok(())
 }
 
-/// Whether a build's cache directory holds anything besides the checksum,
-/// which is all a backend that does not serve files off local disk needs of
-/// it. Anything else is a leftover: artifacts unpacked by a version that did
-/// serve them from here, or a spool file an interrupted upload left behind.
+/// Whether a build's cache directory holds anything besides the checksum --
+/// which is to say, whether the tarball was unpacked into it.
+///
+/// Compared as an OsStr, not through to_filename_str: what is listed here is
+/// artifact filenames, which come from whoever wrote the challenge rather
+/// than from cmgr, and to_filename_str panics on a name that is not UTF-8.
+/// Everywhere else it is applied to a build ID, a namespace an operator
+/// named, or a tarball this server matched by extension.
 fn holds_more_than_its_checksum(cache_dir: &Path) -> Result<bool, std::io::Error> {
+    let checksum = std::ffi::OsStr::new(CHECKSUM_FILENAME);
     for dir_entry in fs::read_dir(cache_dir)? {
-        if to_filename_str(&dir_entry?.path()) != CHECKSUM_FILENAME {
+        if dir_entry?.file_name() != checksum {
             return Ok(true);
         }
     }
@@ -120,20 +125,26 @@ pub(crate) fn sync_cache(
         if let Some(cache_dir) = cache_dirs.get(build_id) {
             reason = "outdated";
             if get_tarball_checksum(tarball_path)? == get_cache_dir_checksum(cache_dir)? {
-                // Current for this tarball. Unless it was unpacked by a
-                // version that unpacked for this backend and this one does
-                // not: the tarball has not changed, so nothing else would
-                // ever revisit this directory, and a copy of every artifact
-                // would be kept for the life of the cache by a server that
-                // never reads it. Reclaiming that disk is the whole of why
-                // extraction became optional.
-                if !extract && holds_more_than_its_checksum(cache_dir)? {
+                // The checksum says which tarball this directory was made
+                // from. It does not say the directory holds what this run
+                // needs of it, and the two backends need different things --
+                // so a host that has changed backends, or been upgraded or
+                // downgraded across the version that made unpacking
+                // optional, has a cache that is current and wrong. Nothing
+                // else would ever revisit it, because the tarball has not
+                // changed.
+                //
+                // Both directions matter, and differently. Left unpacked for
+                // a backend that reads the tarball, it is a second copy of
+                // every artifact kept for the life of the cache by a server
+                // that never opens it. Left bare for one that serves files
+                // off this directory, every build 404s.
+                if holds_more_than_its_checksum(cache_dir)? != extract {
                     info!(
-                        "Clearing unpacked artifacts for build {}, which this backend does not \
-                         serve from disk",
+                        "Cache for build {} does not hold what this backend needs, recreating",
                         build_id
                     );
-                    extract_to(cache_dir, tarball_path, false)?;
+                    extract_to(cache_dir, tarball_path, extract)?;
                 }
                 continue;
             }
@@ -832,5 +843,58 @@ mod tests {
 
         sync_cache(root.path(), &cache, None, true).unwrap();
         assert!(cache.join("7").join("BinEx101.c").is_file());
+    }
+
+    /// And the other direction, which is the one that serves 404s: a cache
+    /// left bare by a backend that reads tarballs is unpacked again for one
+    /// that serves files off disk. The checksum matches either way -- it
+    /// says which tarball the directory came from, not whether it holds what
+    /// is about to be asked of it -- so nothing else would ever revisit it.
+    /// This is the path a host takes when it changes backends, and the one a
+    /// downgrade takes across the version that made unpacking optional.
+    #[test]
+    fn a_bare_cache_is_unpacked_when_extraction_is_on() {
+        let root = TempDir::new("downgrade");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache = root.path().join(".artifact_server_cache");
+        fs::create_dir_all(&cache).unwrap();
+
+        // As a backend that publishes from the tarball left it.
+        extract_to(&cache.join("7"), &tarball, false).unwrap();
+        assert_eq!(
+            dir_entries(&cache.join("7")),
+            vec![CHECKSUM_FILENAME.to_string()]
+        );
+
+        sync_cache(root.path(), &cache, None, true).unwrap();
+        assert_eq!(
+            fs::read(cache.join("7").join("BinEx101.c")).unwrap(),
+            b"source",
+            "every build would have 404'd"
+        );
+    }
+
+    /// An artifact whose name is not UTF-8 does not bring the server down.
+    /// Artifact names come from whoever wrote the challenge, and the check
+    /// for an unpacked cache reads all of them -- on exactly the upgrade
+    /// path it exists for, and only for whichever name read_dir happens to
+    /// return first.
+    #[cfg(unix)]
+    #[test]
+    fn an_artifact_name_that_is_not_utf8_is_survivable() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let root = TempDir::new("notutf8");
+        let cache = root.path().join("7");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join(CHECKSUM_FILENAME), b"sum").unwrap();
+        fs::write(
+            cache.join(std::ffi::OsStr::from_bytes(b"BinEx\xff101.c")),
+            b"source",
+        )
+        .unwrap();
+
+        assert!(holds_more_than_its_checksum(&cache).unwrap());
     }
 }
