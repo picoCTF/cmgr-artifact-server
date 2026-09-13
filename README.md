@@ -9,10 +9,32 @@ backends. Like `cmgrd`, it is a single binary and requires minimal configuration
 The `CMGR_ARTIFACT_DIR` environment variable (also used by `cmgrd`) determines which artifacts to
 distribute, while the backend and any additional settings are specified via command-line options.
 
-Behind the scenes, `cmgr-artifact-server` maintains a cache of extracted artifact tarballs
-(`.artifact_server_cache`) within the specified `CMGR_ARTIFACT_DIR`. A full synchronization of all
-existing local artifacts to the backend is performed upon startup. Any further changes to local
-artifacts (due to build creation, updates, or deletion) are automatically handled as they occur.
+Behind the scenes, `cmgr-artifact-server` maintains a cache (`.artifact_server_cache`) within the
+specified `CMGR_ARTIFACT_DIR`. A full synchronization of all existing local artifacts to the
+backend is performed upon startup. Any further changes to local artifacts (due to build creation,
+updates, or deletion) are automatically handled as they occur.
+
+What that cache holds depends on the backend. The `selfhosted` backend serves files off local
+disk, so each tarball is unpacked into it. The `S3` backend copies bytes to a bucket and reads
+them out of the tarballs directly, so it keeps only a checksum per build — unpacking for it would
+mean a second copy of every artifact on the machine that builds them, which for a corpus of any
+size is most of a disk.
+
+### Artifact namespaces
+
+A [cork](https://github.com/CyLabAcademy/challenge-orchestrator) build plane builds for several
+orchestrators at once, and sorts each schema's tarballs into a subdirectory of `CMGR_ARTIFACT_DIR`
+named for the destination it was built for. Those subdirectories are picked up automatically, and a
+build found in one is published under a matching path: a tarball at `library/7.tar.gz` becomes
+`library/7/file.c` rather than `7/file.c`, so one server can publish several events' artifacts
+without their build IDs colliding, and an event can be retired by deleting a single prefix.
+
+cork marks each of these directories with an empty `.cork-artifact-namespace` file, and only marked
+directories are treated as namespaces. Any other subdirectory is ignored — which matters because
+`CMGR_ARTIFACT_DIR` is often the challenge directory itself, whose subdirectories are challenges.
+
+A tarball directly in `CMGR_ARTIFACT_DIR` keeps a bare build ID for its path, exactly as before, so
+a plain `cmgr`/`cmgrd` deployment is unaffected.
 
 ## Installation
 
@@ -136,3 +158,19 @@ Accordingly, any client applications that generate URLs served by `cmgr-artifact
 | bucket | yes | S3 bucket name |
 | path-prefix | no | Slash-delimited path prefix to use when uploading artifacts. |
 | cloudfront-distribution | no | CloudFront distribution ID. If specified, will automatically create invalidations when artifacts are updated. Uses `path-prefix` if set (assumes distribution's origin path is the bucket root). |
+| prune-orphans | no | Whether the startup synchronization removes bucket directories that have no local artifact. Defaults to `true`. See [orphan removal](#orphan-removal). |
+
+#### Orphan removal
+
+On startup, artifacts in the bucket with no corresponding local artifact are removed, so that
+builds deleted while this was not running do not stay published. Deletions that happen *while* it
+is running are propagated as they occur and do not depend on this pass.
+
+Two safeguards, because this pass is destructive:
+
+- If the local artifact directory holds **no** builds at all while the bucket holds some, nothing
+  is removed and a warning is logged. An empty artifact directory means the host has not built
+  yet — a fresh disk, a restored machine, a build server brought up on demand — and is not the
+  statement that every build was deleted.
+- `-o prune-orphans=false` disables the pass entirely. Use it where the artifact directory is not
+  the durable record of what exists, such as a build server whose disk does not outlive it.
