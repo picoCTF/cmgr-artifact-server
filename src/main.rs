@@ -9,12 +9,22 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use watcher::{sync_cache, watch_dir};
+use watcher::{artifact_namespaces, sync_cache, watch_dir};
 
 /// Name of file containing a tarball checksum inside a cache directory.
 pub(crate) const CHECKSUM_FILENAME: &str = ".__checksum";
 
-/// The name of a cache directory.
+/// Name of the empty file cork writes into each per-destination artifact
+/// directory it makes. It is what tells one of those from any other
+/// subdirectory of CMGR_ARTIFACT_DIR -- the extraction cache is one, and so
+/// is every challenge where the artifact directory and the challenge tree are
+/// the same path, which is cmgr's ansible role's default.
+pub(crate) const NAMESPACE_MARKER_FILENAME: &str = ".cork-artifact-namespace";
+
+/// A build's key: the name of its cache directory, and the path its artifact
+/// files are published under. Either a build ID (digested, with a salt) or
+/// one prefixed with the namespace directory its tarball was found in, when
+/// a cork build plane has sorted its bundles by destination.
 type BuildId = String;
 
 #[tokio::main]
@@ -77,7 +87,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Determine artifact directory
     let artifact_dir = env::var("CMGR_ARTIFACT_DIR").unwrap_or_else(|_| ".".into());
-    let artifact_dir = PathBuf::from(&artifact_dir);
+    // Canonicalized, because a tarball's namespace is worked out by comparing
+    // its parent against this and the file watcher reports absolute paths
+    // whatever was configured here.
+    let artifact_dir = fs::canonicalize(PathBuf::from(&artifact_dir))?;
     debug!("Determined artifact dir: {}", artifact_dir.display());
     let mut cache_dir = artifact_dir.clone();
     cache_dir.push(".artifact_server_cache");
@@ -97,6 +110,13 @@ async fn main() -> Result<(), anyhow::Error> {
     info!("Updating artifact cache");
     sync_cache(&artifact_dir, &cache_dir, salt)?;
 
+    // The per-destination directories a cork build plane sorts its bundles
+    // into, which the cache mirrors and the backends publish under. Read
+    // after the sync, so a namespace that only appeared during it is counted;
+    // one that appears later is picked up by the watcher.
+    let namespaces = artifact_namespaces(&artifact_dir)?;
+    debug!("Determined artifact namespaces: {namespaces:?}");
+
     // Watch artifact directory
     let rx = watch_dir(&artifact_dir, &cache_dir, salt);
 
@@ -110,13 +130,13 @@ async fn main() -> Result<(), anyhow::Error> {
         "selfhosted" => {
             SelfhostedBackend::new(backend_options)
                 .await?
-                .run(&cache_dir, rx)
+                .run(&cache_dir, &namespaces, rx)
                 .await
         }
         "s3" => {
             S3Backend::new(backend_options)
                 .await?
-                .run(&cache_dir, rx)
+                .run(&cache_dir, &namespaces, rx)
                 .await
         }
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead

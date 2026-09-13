@@ -14,6 +14,22 @@ Behind the scenes, `cmgr-artifact-server` maintains a cache of extracted artifac
 existing local artifacts to the backend is performed upon startup. Any further changes to local
 artifacts (due to build creation, updates, or deletion) are automatically handled as they occur.
 
+### Artifact namespaces
+
+A [cork](https://github.com/CyLabAcademy/challenge-orchestrator) build plane builds for several
+orchestrators at once, and sorts each schema's tarballs into a subdirectory of `CMGR_ARTIFACT_DIR`
+named for the destination it was built for. Those subdirectories are picked up automatically, and a
+build found in one is published under a matching path: a tarball at `library/7.tar.gz` becomes
+`library/7/file.c` rather than `7/file.c`, so one server can publish several events' artifacts
+without their build IDs colliding, and an event can be retired by deleting a single prefix.
+
+cork marks each of these directories with an empty `.cork-artifact-namespace` file, and only marked
+directories are treated as namespaces. Any other subdirectory is ignored — which matters because
+`CMGR_ARTIFACT_DIR` is often the challenge directory itself, whose subdirectories are challenges.
+
+A tarball directly in `CMGR_ARTIFACT_DIR` keeps a bare build ID for its path, exactly as before, so
+a plain `cmgr`/`cmgrd` deployment is unaffected.
+
 ## Installation
 
 Download the latest [release](https://github.com/picoCTF/cmgr-artifact-server/releases) for your

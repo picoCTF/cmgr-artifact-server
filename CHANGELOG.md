@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Artifact tarballs in a subdirectory of `CMGR_ARTIFACT_DIR` are now published under a matching path prefix, so that one server can publish the artifacts of the several orchestrators a [cork](https://github.com/CyLabAcademy/challenge-orchestrator) build plane builds for. Only subdirectories carrying a `.cork-artifact-namespace` marker are treated this way; every other subdirectory is ignored, as before. A tarball in `CMGR_ARTIFACT_DIR` itself is unaffected.
+
 ## v2.3.0
 
 - The `linux_arm64` release binary is now built natively on an arm64 runner. Earlier releases mislabeled this tarball: it actually contained a `linux_amd64` binary.

@@ -5,7 +5,7 @@ use hyper::{Request, Response};
 use hyper_staticfile::{Body, Static};
 use hyper_util::rt::TokioIo;
 use log::{debug, info};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -66,6 +66,7 @@ impl Backend for SelfhostedBackend {
     async fn run(
         &self,
         cache_dir: &Path,
+        _namespaces: &HashSet<String>,
         mut _rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
         let static_ = Static::new(cache_dir);

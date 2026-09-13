@@ -6,7 +6,6 @@ use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
 use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -72,6 +71,7 @@ impl Backend for S3Backend {
     async fn run(
         &self,
         cache_dir: &Path,
+        namespaces: &HashSet<String>,
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
         // Check that we have sufficient IAM permissions. Better to do this up-front than to
@@ -81,7 +81,7 @@ impl Backend for S3Backend {
 
         // Sync existing artifacts
         info!("Syncing current artifact cache to S3");
-        self.synchronize(cache_dir).await?;
+        self.synchronize(cache_dir, namespaces).await?;
 
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
@@ -368,60 +368,58 @@ impl S3Backend {
     }
 
     /// Perform a full synchronization of the cache directory to the S3 bucket.
-    async fn synchronize(&self, cache_dir: &Path) -> Result<(), anyhow::Error> {
-        // Get build IDs and paths of all local cache directories
-        let mut cache_dirs: HashMap<String, PathBuf> = HashMap::new();
-        for dir_entry in fs::read_dir(cache_dir)? {
-            let path_buf = dir_entry?.path();
-            if path_buf.is_dir() {
-                let dir_name = path_buf
-                    .file_name()
-                    .unwrap_or_else(|| panic!("Failed to get filename for path {:?}", path_buf))
-                    .to_str()
-                    .unwrap_or_else(|| panic!("Failed to convert path {:?} to utf-8", path_buf));
-                cache_dirs.insert(dir_name.into(), path_buf);
-            }
-        }
+    async fn synchronize(
+        &self,
+        cache_dir: &Path,
+        namespaces: &HashSet<String>,
+    ) -> Result<(), anyhow::Error> {
+        // Get build keys and paths of all local cache directories
+        let cache_dirs = crate::watcher::cache_build_ids(cache_dir, namespaces)?;
 
-        // Get all build IDs with directories in bucket
+        // Get all build keys with directories in the bucket. One listing of
+        // the prefix itself and one more under each namespace: a build's
+        // objects are one level below the prefix normally and two below it
+        // where a cork build plane has sorted its bundles by destination, and
+        // a delimited listing only ever reports the level it is given.
         let mut bucket_build_ids: HashSet<String> = HashSet::new();
-        let mut resp = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .prefix(&self.path_prefix)
-            .delimiter('/')
-            .send()
-            .await?;
-        if let Some(prefixes) = resp.common_prefixes {
-            bucket_build_ids.extend(&mut prefixes.into_iter().map(|p| {
-                p.prefix
-                    .unwrap()
-                    .strip_prefix(&self.path_prefix)
-                    .unwrap()
-                    .trim_end_matches('/')
-                    .to_string()
-            }));
-        }
-        while resp.is_truncated.is_some_and(|t| t) {
-            resp = self
-                .s3_client
-                .list_objects_v2()
-                .bucket(&self.bucket)
-                .prefix(&self.path_prefix)
-                .delimiter('/')
-                .continuation_token(resp.next_continuation_token.unwrap())
-                .send()
-                .await?;
-            if let Some(prefixes) = resp.common_prefixes {
-                bucket_build_ids.extend(&mut prefixes.into_iter().map(|p| {
-                    p.prefix
-                        .unwrap()
-                        .strip_prefix(&self.path_prefix)
-                        .unwrap()
-                        .trim_end_matches('/')
-                        .to_string()
-                }));
+        for under in
+            std::iter::once(String::new()).chain(namespaces.iter().map(|name| format!("{name}/")))
+        {
+            let prefix = format!("{}{}", self.path_prefix, under);
+            let mut token: Option<String> = None;
+            loop {
+                let mut request = self
+                    .s3_client
+                    .list_objects_v2()
+                    .bucket(&self.bucket)
+                    .prefix(&prefix)
+                    .delimiter('/');
+                if let Some(token) = token.take() {
+                    request = request.continuation_token(token);
+                }
+                let resp = request.send().await?;
+                if let Some(prefixes) = resp.common_prefixes {
+                    bucket_build_ids.extend(prefixes.into_iter().filter_map(|p| {
+                        let key = p
+                            .prefix?
+                            .strip_prefix(&self.path_prefix)?
+                            .trim_end_matches('/')
+                            .to_string();
+                        // A namespace is not a build of its own; listing
+                        // under it is what finds the builds inside it.
+                        if namespaces.contains(&key) {
+                            return None;
+                        }
+                        Some(key)
+                    }));
+                }
+                if !resp.is_truncated.is_some_and(|t| t) {
+                    break;
+                }
+                token = resp.next_continuation_token;
+                if token.is_none() {
+                    break;
+                }
             }
         }
 
