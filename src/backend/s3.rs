@@ -127,6 +127,59 @@ fn artifact_object_path(entry: &Path, is_file: bool) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// What this backend was configured with, apart from the clients it talks to.
+///
+/// Kept separate from the clients because it is the whole of what decides
+/// which objects a build is published as, and because a test can then pair it
+/// with a client of its own (see S3Backend::from_parts) rather than one built
+/// from an environment that would have to hold AWS credentials.
+#[derive(Debug)]
+struct S3Settings {
+    bucket: String,
+    path_prefix: String,
+    prune_orphans: bool,
+    cloudfront_distribution: Option<String>,
+}
+
+impl S3Settings {
+    fn from_options(options: &HashMap<String, String>) -> Result<Self, anyhow::Error> {
+        let bucket = match options.get("bucket") {
+            Some(bucket_name) => bucket_name.to_string(),
+            None => anyhow::bail!("required backend option \"bucket\" not provided"),
+        };
+        // If non-empty, path prefixes must include a trailing slash, but not a leading slash.
+        // A root path prefix ("/") must be replaced with an empty string to avoid duplicate leading
+        // slashes when used in S3 object keys. Normalize the prefix:
+        let path_prefix = options
+            .get("path-prefix")
+            .unwrap_or(&String::from(""))
+            .to_string();
+        let mut path_prefix = path_prefix.trim_start_matches('/').to_string();
+        if !path_prefix.is_empty() && !path_prefix.ends_with('/') {
+            path_prefix.push('/');
+        }
+        debug!("Normalized path prefix: \"{}\"", path_prefix);
+
+        let prune_orphans = match options.get("prune-orphans").map(String::as_str) {
+            None | Some("true") => true,
+            Some("false") => false,
+            Some(other) => anyhow::bail!(
+                "backend option \"prune-orphans\" must be \"true\" or \"false\", not {other:?}"
+            ),
+        };
+        debug!("Orphan removal on startup: {}", prune_orphans);
+
+        Ok(Self {
+            bucket,
+            path_prefix,
+            prune_orphans,
+            cloudfront_distribution: options
+                .get("cloudfront-distribution")
+                .map(|v| v.to_string()),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct S3Backend {
     bucket: String,
@@ -146,22 +199,7 @@ pub(crate) struct S3Backend {
 
 impl Backend for S3Backend {
     async fn new(options: HashMap<String, String>) -> Result<Self, anyhow::Error> {
-        let bucket = match options.get("bucket") {
-            Some(bucket_name) => bucket_name.to_string(),
-            None => anyhow::bail!("required backend option \"bucket\" not provided"),
-        };
-        // If non-empty, path prefixes must include a trailing slash, but not a leading slash.
-        // A root path prefix ("/") must be replaced with an empty string to avoid duplicate leading
-        // slashes when used in S3 object keys. Normalize the prefix:
-        let path_prefix = options
-            .get("path-prefix")
-            .unwrap_or(&String::from(""))
-            .to_string();
-        let mut path_prefix = path_prefix.trim_start_matches('/').to_string();
-        if !path_prefix.is_empty() && !path_prefix.ends_with('/') {
-            path_prefix.push('/');
-        }
-        debug!("Normalized path prefix: \"{}\"", path_prefix);
+        let settings = S3Settings::from_options(&options)?;
 
         // Create S3 and CloudFront clients with adaptive retry to handle rate limiting
         let retry_config = RetryConfig::adaptive().with_max_attempts(10);
@@ -170,31 +208,12 @@ impl Backend for S3Backend {
             .load()
             .await;
         let s3_client = aws_sdk_s3::Client::new(&shared_config);
-        let cloudfront_client = options
-            .get("cloudfront-distribution")
+        let cloudfront_client = settings
+            .cloudfront_distribution
+            .as_ref()
             .map(|_| aws_sdk_cloudfront::Client::new(&shared_config));
 
-        let prune_orphans = match options.get("prune-orphans").map(String::as_str) {
-            None | Some("true") => true,
-            Some("false") => false,
-            Some(other) => anyhow::bail!(
-                "backend option \"prune-orphans\" must be \"true\" or \"false\", not {other:?}"
-            ),
-        };
-        debug!("Orphan removal on startup: {}", prune_orphans);
-
-        let backend = Self {
-            bucket,
-            path_prefix,
-            prune_orphans,
-            cloudfront_distribution: options
-                .get("cloudfront-distribution")
-                .map(|v| v.to_string()),
-            s3_client,
-            cloudfront_client,
-            invalidation_counter: AtomicU64::new(0),
-        };
-        Ok(backend)
+        Ok(Self::from_parts(settings, s3_client, cloudfront_client))
     }
 
     /// Bytes are copied to the bucket, so the cache needs no unpacked copy of
@@ -298,6 +317,23 @@ impl Backend for S3Backend {
 }
 
 impl S3Backend {
+    /// Assembles a backend from settings and the clients it will use.
+    fn from_parts(
+        settings: S3Settings,
+        s3_client: aws_sdk_s3::Client,
+        cloudfront_client: Option<aws_sdk_cloudfront::Client>,
+    ) -> Self {
+        Self {
+            bucket: settings.bucket,
+            path_prefix: settings.path_prefix,
+            prune_orphans: settings.prune_orphans,
+            cloudfront_distribution: settings.cloudfront_distribution,
+            s3_client,
+            cloudfront_client,
+            invalidation_counter: AtomicU64::new(0),
+        }
+    }
+
     /// Test that the current IAM user has all necessary permissions.
     async fn test_permissions(&self) -> Result<(), anyhow::Error> {
         debug!("Testing ListObjectsV2");
@@ -748,6 +784,366 @@ impl S3Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{TempDir, write_tarball, write_tarball_of};
+    use aws_sdk_s3::config::{Credentials, Region, StalledStreamProtectionConfig};
+    use aws_sdk_s3::primitives::SdkBody;
+    use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient};
+
+    /// A backend wired to a fake transport rather than to AWS.
+    ///
+    /// Retries are off so that a request the fake has no answer for fails the
+    /// test at once instead of being retried ten times with backoff, and path
+    /// style addressing is on so that a request's URI reads as the object key
+    /// it is rather than hiding the bucket in the hostname.
+    fn backend(http: &StaticReplayClient, options: &[(&str, &str)]) -> S3Backend {
+        let options: HashMap<String, String> = options
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("ak", "sk", None, None, "test"))
+            .force_path_style(true)
+            .retry_config(RetryConfig::disabled())
+            .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+            .http_client(http.clone())
+            .build();
+        S3Backend::from_parts(
+            S3Settings::from_options(&options).unwrap(),
+            aws_sdk_s3::Client::from_conf(config),
+            None,
+        )
+    }
+
+    /// A canned successful response. The request half of a replay event is
+    /// unused here: these tests read back what was actually asked
+    /// (`requests`) rather than declaring it up front, since what is under
+    /// test is which objects the backend decides to touch.
+    fn responds(body: &str) -> ReplayEvent {
+        ReplayEvent::new(
+            http::Request::builder()
+                .uri("https://unused.test/")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(body))
+                .unwrap(),
+        )
+    }
+
+    /// A ListObjectsV2 response naming directories, as a delimited listing
+    /// returns them.
+    fn lists_directories(prefixes: &[&str]) -> ReplayEvent {
+        let entries: String = prefixes
+            .iter()
+            .map(|p| format!("<CommonPrefixes><Prefix>{p}</Prefix></CommonPrefixes>"))
+            .collect();
+        responds(&format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+             <Name>bucket</Name><IsTruncated>false</IsTruncated>{entries}</ListBucketResult>"
+        ))
+    }
+
+    /// A ListObjectsV2 response naming objects.
+    fn lists_objects(keys: &[&str]) -> ReplayEvent {
+        let entries: String = keys
+            .iter()
+            .map(|k| format!("<Contents><Key>{k}</Key></Contents>"))
+            .collect();
+        responds(&format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+             <Name>bucket</Name><IsTruncated>false</IsTruncated>{entries}</ListBucketResult>"
+        ))
+    }
+
+    /// A DeleteObjects response.
+    fn deleted() -> ReplayEvent {
+        responds(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"></DeleteResult>",
+        )
+    }
+
+    /// What was asked of S3, in order: the method and the path, which under
+    /// path style addressing is the bucket followed by the object key. The
+    /// host is dropped, and so is the `x-id` parameter the SDK tags requests
+    /// with -- it names the operation, which the method already says, and
+    /// says nothing about which object was touched.
+    fn requests(http: &StaticReplayClient) -> Vec<String> {
+        http.actual_requests()
+            .map(|r| {
+                let uri: http::Uri = r.uri().parse().expect("request URI");
+                let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+                let path = path.split_once("?x-id=").map_or(path, |(head, _)| head);
+                format!("{} {}", r.method(), path)
+            })
+            .collect()
+    }
+
+    /// Writes a build's cache directory as the watcher leaves it with
+    /// extraction off: the directory, holding a checksum and nothing else.
+    fn cached_build(cache_dir: &Path, build: &str, checksum: &[u8]) {
+        let dir = cache_dir.join(build);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(CHECKSUM_FILENAME), checksum).unwrap();
+    }
+
+    /// A build found in one of cork's namespaces is published under a
+    /// matching prefix, each artifact at its own name, and the path prefix is
+    /// in front of the lot. This is the arrangement that lets one build plane
+    /// serve several orchestrators out of one bucket, and lets an event be
+    /// retired by deleting a single prefix.
+    #[tokio::test]
+    async fn a_namespaced_build_is_published_under_its_namespace() {
+        let root = TempDir::new("upload");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(
+            &tarball,
+            &[("BinEx101", b"binary"), ("nested/BinEx101.c", b"source")],
+        );
+        let cache_dir = root.path().join("cache");
+        cached_build(&cache_dir, "library/7", b"sum");
+
+        let http = StaticReplayClient::new(vec![responds(""), responds(""), responds("")]);
+        let backend = backend(&http, &[("bucket", "arts"), ("path-prefix", "ctf")]);
+        backend
+            .upload_build(&cache_dir, "library/7", &tarball)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            requests(&http),
+            vec![
+                "PUT /arts/ctf/library/7/BinEx101",
+                "PUT /arts/ctf/library/7/nested/BinEx101.c",
+                // Last, because it is what says the rest of them are up.
+                "PUT /arts/ctf/library/7/.__checksum",
+            ]
+        );
+    }
+
+    /// A build in the artifact directory itself is published exactly where it
+    /// always was. The `selfhosted` deployments this server was written for
+    /// have no namespaces, and nothing about them may move.
+    #[tokio::test]
+    async fn a_plain_build_is_published_where_it_always_was() {
+        let root = TempDir::new("upload-flat");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache_dir = root.path().join("cache");
+        cached_build(&cache_dir, "7", b"sum");
+
+        let http = StaticReplayClient::new(vec![responds(""), responds("")]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .upload_build(&cache_dir, "7", &tarball)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            requests(&http),
+            vec!["PUT /arts/7/BinEx101.c", "PUT /arts/7/.__checksum"]
+        );
+    }
+
+    /// An entry that is not publishable reaches no object. Unpacking a
+    /// tarball to disk had `Archive::unpack` to refuse what should not be
+    /// written; streaming entries into object keys has only
+    /// `artifact_object_path`, so what matters is that it is actually
+    /// consulted on the way to the bucket and not merely unit-tested beside
+    /// it.
+    #[tokio::test]
+    async fn an_unpublishable_entry_reaches_no_object() {
+        let root = TempDir::new("refuse");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball_of(
+            &tarball,
+            &[
+                (tar::EntryType::Directory, "nested/", b""),
+                (tar::EntryType::Regular, "../escape.txt", b"nope"),
+                (tar::EntryType::Regular, "nested/BinEx101.c", b"source"),
+            ],
+        );
+        // The fixture is only evidence if the refused name really is in the
+        // archive. A tar writer that quietly cleaned it -- which is what
+        // `Header::set_path` does, and why this one does not use it -- would
+        // leave this test passing while testing nothing.
+        let names: Vec<String> =
+            Archive::new(GzDecoder::new(std::fs::File::open(&tarball).unwrap()))
+                .entries()
+                .unwrap()
+                .map(|e| e.unwrap().path().unwrap().display().to_string())
+                .collect();
+        assert!(
+            names.iter().any(|n| n.contains("..")),
+            "the fixture lost its traversing entry: {names:?}"
+        );
+
+        let cache_dir = root.path().join("cache");
+        cached_build(&cache_dir, "7", b"sum");
+
+        let http = StaticReplayClient::new(vec![responds(""), responds("")]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .upload_build(&cache_dir, "7", &tarball)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            requests(&http),
+            vec!["PUT /arts/7/nested/BinEx101.c", "PUT /arts/7/.__checksum"]
+        );
+    }
+
+    /// The spool file an upload streams entries through does not survive it.
+    /// It sits in the build's own cache directory, and a leftover would be
+    /// taken for an artifact by nothing but would hold the largest file of
+    /// the build for as long as the cache lived.
+    #[tokio::test]
+    async fn the_spool_file_does_not_outlive_the_upload() {
+        let root = TempDir::new("spool");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache_dir = root.path().join("cache");
+        cached_build(&cache_dir, "7", b"sum");
+
+        let http = StaticReplayClient::new(vec![responds(""), responds("")]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .upload_build(&cache_dir, "7", &tarball)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            crate::testing::dir_entries(&cache_dir.join("7")),
+            vec![CHECKSUM_FILENAME.to_string()]
+        );
+    }
+
+    /// The bucket is listed once for the prefix itself and once under each
+    /// namespace. A delimited listing only ever reports the level it is
+    /// given, so a build two levels down -- which is every build a cork build
+    /// plane produces -- is invisible to the first listing alone. Missing it
+    /// would not be quiet: those builds would look absent from the bucket and
+    /// be re-uploaded on every start.
+    #[tokio::test]
+    async fn the_bucket_is_listed_under_every_namespace() {
+        let root = TempDir::new("listing");
+        let cache_dir = root.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let http = StaticReplayClient::new(vec![
+            lists_directories(&["7/", "library/"]),
+            lists_directories(&["library/9/"]),
+        ]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .synchronize(
+                &cache_dir,
+                &HashSet::from(["library".to_string()]),
+                &HashMap::new(),
+            )
+            .await
+            .unwrap();
+
+        let requests = requests(&http);
+        assert_eq!(requests.len(), 2, "listings made: {requests:?}");
+        assert!(
+            requests[0].contains("delimiter=%2F"),
+            "the first listing was not delimited: {}",
+            requests[0]
+        );
+        assert!(
+            requests[1].contains("prefix=library%2F"),
+            "nothing listed the inside of the namespace: {}",
+            requests[1]
+        );
+    }
+
+    /// Nothing local means nothing is removed. The same two listings as
+    /// above, and then no delete at all: a host with an empty artifact
+    /// directory has not built yet rather than had every build deleted, and
+    /// the bucket it is pointed at may be serving a running event.
+    #[tokio::test]
+    async fn a_host_with_nothing_local_deletes_nothing() {
+        let root = TempDir::new("no-sweep");
+        let cache_dir = root.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let http = StaticReplayClient::new(vec![
+            lists_directories(&["7/", "library/"]),
+            lists_directories(&["library/9/"]),
+        ]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .synchronize(
+                &cache_dir,
+                &HashSet::from(["library".to_string()]),
+                &HashMap::new(),
+            )
+            .await
+            .unwrap();
+
+        let requests = requests(&http);
+        assert!(
+            !requests.iter().any(|r| r.starts_with("POST")),
+            "something was deleted from the bucket: {requests:?}"
+        );
+    }
+
+    /// A build the bucket has and this host does not is removed, under the
+    /// namespace it lives in. A build whose checksum already matches is left
+    /// alone -- not re-uploaded, which for a bucket of any size is the
+    /// difference between a start and an outage.
+    #[tokio::test]
+    async fn a_stale_namespaced_build_is_removed() {
+        let root = TempDir::new("sweep");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache_dir = root.path().join("cache");
+        cached_build(&cache_dir, "7", b"same");
+
+        let http = StaticReplayClient::new(vec![
+            lists_directories(&["7/", "library/"]),
+            lists_directories(&["library/9/"]),
+            // The bucket's copy of build 7 is current, so it is skipped.
+            responds("same"),
+            // library/9 has no local artifact: list it, then delete it.
+            lists_objects(&["library/9/BinEx101.c", "library/9/.__checksum"]),
+            deleted(),
+        ]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .synchronize(
+                &cache_dir,
+                &HashSet::from(["library".to_string()]),
+                &HashMap::from([("7".to_string(), tarball)]),
+            )
+            .await
+            .unwrap();
+
+        let requests = requests(&http);
+        assert!(
+            requests.iter().any(|r| r == "GET /arts/7/.__checksum"),
+            "the bucket's checksum for build 7 was never read: {requests:?}"
+        );
+        assert!(
+            !requests.iter().any(|r| r.starts_with("PUT")),
+            "a build whose checksum already matched was re-uploaded: {requests:?}"
+        );
+        assert!(
+            requests.iter().any(|r| r.contains("prefix=library%2F9%2F")),
+            "the stale build was not listed under its namespace: {requests:?}"
+        );
+        assert!(
+            requests.iter().any(|r| r.starts_with("POST /arts/?delete")),
+            "the stale build was not deleted: {requests:?}"
+        );
+    }
 
     /// An ordinary entry, at the root of the archive and nested, keeps its
     /// path as the object key suffix.

@@ -529,75 +529,7 @@ pub(crate) fn cache_build_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    /// A directory that removes itself. Written out rather than pulled in
-    /// because this crate has no dev-dependencies and one test helper is not
-    /// a reason to start.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            static COUNTER: AtomicU32 = AtomicU32::new(0);
-            let unique = format!(
-                "cmgr-artifact-server-test-{}-{}-{}",
-                name,
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed)
-            );
-            let path = std::env::temp_dir().join(unique);
-            let _ = fs::remove_dir_all(&path);
-            fs::create_dir_all(&path).expect("failed to create temp dir");
-            // Canonicalized as main.rs canonicalizes the artifact directory,
-            // so the parent comparisons under test see the same shape they do
-            // in the binary.
-            TempDir(fs::canonicalize(&path).expect("failed to canonicalize temp dir"))
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    /// Makes a directory under `root` and marks it as one of cork's
-    /// per-destination artifact directories, as cork does.
-    fn namespace_dir(root: &Path, name: &str) -> PathBuf {
-        let dir = root.join(name);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(NAMESPACE_MARKER_FILENAME), b"").unwrap();
-        dir
-    }
-
-    /// Writes a gzipped tarball holding the given files.
-    fn write_tarball(path: &Path, files: &[(&str, &[u8])]) {
-        let file = fs::File::create(path).unwrap();
-        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        let mut builder = tar::Builder::new(encoder);
-        for (name, data) in files {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(data.len() as u64);
-            header.set_mode(0o644);
-            header.set_cksum();
-            builder.append_data(&mut header, name, *data).unwrap();
-        }
-        builder.into_inner().unwrap().finish().unwrap();
-    }
-
-    /// The contents of a cache directory, sorted, for comparison.
-    fn dir_entries(dir: &Path) -> Vec<String> {
-        let mut names: Vec<String> = fs::read_dir(dir)
-            .unwrap()
-            .map(|e| to_filename_str(&e.unwrap().path()).to_owned())
-            .collect();
-        names.sort();
-        names
-    }
+    use crate::testing::{TempDir, dir_entries, namespace_dir, touch, write_tarball};
 
     /// With extraction off the cache holds one checksum per build and nothing
     /// else. That is the whole point of it: unpacking every tarball on the
@@ -678,12 +610,6 @@ mod tests {
 
         extract_to(&cache, &tarball, false).unwrap();
         assert_eq!(dir_entries(&cache), vec![CHECKSUM_FILENAME.to_string()]);
-    }
-    fn touch(path: &Path) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(path, b"").unwrap();
     }
 
     /// A tarball in the artifact directory itself keeps a bare build ID, and
@@ -840,5 +766,71 @@ mod tests {
             found.is_empty(),
             "took a directory with no checksum for a build: {found:?}"
         );
+    }
+
+    /// And the same inside a namespace, which is where it is worst: the
+    /// caller reads the checksum of everything this returns, so a directory
+    /// an interrupted extraction left behind does not merely get published
+    /// wrongly -- it fails the startup synchronization, on this start and
+    /// every later one, until somebody deletes it by hand.
+    #[test]
+    fn a_namespaced_cache_directory_without_a_checksum_is_not_a_build() {
+        let root = TempDir::new("halfcache-ns");
+        let cache = root.path().join(".artifact_server_cache");
+        touch(&cache.join("library").join("7").join(CHECKSUM_FILENAME));
+        touch(&cache.join("library").join("8").join("BinEx101.c"));
+
+        let namespaces = HashSet::from(["library".to_string()]);
+        let found = cache_build_ids(&cache, &namespaces).unwrap();
+        let mut keys: Vec<_> = found.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["library/7"]);
+
+        // What the caller does with them, which is what makes it fatal.
+        for cache_dir in found.values() {
+            get_cache_dir_checksum(cache_dir).expect("a build with no readable checksum");
+        }
+    }
+
+    /// Upgrading a host in place reclaims its disk. The tarball has not
+    /// changed, so the build is current and nothing else would ever look at
+    /// its directory again -- and a backend that no longer serves files from
+    /// there would keep a copy of every artifact for the life of the cache.
+    /// Reclaiming that disk is the whole of why extraction became optional,
+    /// and the release notes promise it.
+    #[test]
+    fn an_unpacked_cache_is_cleared_when_extraction_is_off() {
+        let root = TempDir::new("upgrade");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache = root.path().join(".artifact_server_cache");
+        fs::create_dir_all(&cache).unwrap();
+
+        // As a version that unpacked for this backend left it.
+        extract_to(&cache.join("7"), &tarball, true).unwrap();
+        assert!(cache.join("7").join("BinEx101.c").is_file());
+
+        sync_cache(root.path(), &cache, None, false).unwrap();
+        assert_eq!(
+            dir_entries(&cache.join("7")),
+            vec![CHECKSUM_FILENAME.to_string()],
+            "the unpacked copy survived the upgrade"
+        );
+    }
+
+    /// The same sync leaves an unpacked cache alone when the backend serves
+    /// files off it. Clearing there would empty the directory the selfhosted
+    /// backend answers requests from.
+    #[test]
+    fn an_unpacked_cache_is_kept_when_extraction_is_on() {
+        let root = TempDir::new("no-upgrade");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache = root.path().join(".artifact_server_cache");
+        fs::create_dir_all(&cache).unwrap();
+        extract_to(&cache.join("7"), &tarball, true).unwrap();
+
+        sync_cache(root.path(), &cache, None, true).unwrap();
+        assert!(cache.join("7").join("BinEx101.c").is_file());
     }
 }

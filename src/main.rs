@@ -1,4 +1,6 @@
 mod backend;
+#[cfg(test)]
+mod testing;
 mod watcher;
 
 use backend::{Backend, S3Backend, SelfhostedBackend};
