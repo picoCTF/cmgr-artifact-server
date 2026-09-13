@@ -1,16 +1,17 @@
 use crate::backend::Backend;
-use crate::{BuildEvent, CHECKSUM_FILENAME, get_cache_dir_checksum};
+use crate::{BuildEvent, BuildId, CHECKSUM_FILENAME, get_cache_dir_checksum};
 use aws_config::BehaviorVersion;
 use aws_config::retry::RetryConfig;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
 use aws_sdk_s3::primitives::ByteStream;
+use flate2::read::GzDecoder;
 use log::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tar::Archive;
 use tokio::sync::mpsc::Receiver;
-use walkdir::WalkDir;
 
 /// Maximum number of wildcard invalidation paths allowed per CloudFront invalidation request.
 const CLOUDFRONT_MAX_WILDCARD_PATHS: usize = 15;
@@ -53,6 +54,77 @@ fn orphan_sweep(prune_orphans: bool, local_builds: usize, bucket_builds: usize) 
         );
     }
     OrphanSweep::Run
+}
+
+/// Name of the file each tarball entry is spooled through on its way to the
+/// bucket. It lives in the build's own cache directory, is truncated and
+/// refilled per entry, and is removed when the upload ends however it ends.
+const SPOOL_FILENAME: &str = ".__spool";
+
+/// A file removed when it goes out of scope, however the scope ends. The
+/// upload below returns early on any S3 or I/O error, and a spool left behind
+/// would sit in the cache holding the largest file of a build that failed.
+struct SpoolFile(PathBuf);
+
+impl Drop for SpoolFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// The object key suffix an artifact tarball entry is published under, or
+/// None if it must not be published at all.
+///
+/// Extracting a tarball to disk has a backstop: `Archive::unpack` refuses to
+/// write outside the directory it was given. Streaming entries straight into
+/// object keys has none, and the names come out of a tarball this server did
+/// not build. Two of them are not merely untidy:
+///
+/// - An **absolute** name. The key is composed by pushing the entry onto the
+///   build's prefix, and pushing an absolute path replaces everything before
+///   it -- so `/etc/passwd` would be written at the bucket root rather than
+///   under the build, outside any prefix a retirement would ever delete.
+/// - A name with **parent components**. It cannot traverse an S3 key, which
+///   is a flat string, but the object then answers to a path no request
+///   resolves to: CloudFront normalizes `a/../b` to `b` before it ever
+///   reaches the bucket, so the file is published and permanently
+///   unreachable.
+///
+/// Everything that is not a plain relative path of ordinary components is
+/// therefore refused rather than cleaned up, and only regular files are
+/// published: a symlink or a device node has no meaning as an object, and
+/// guessing at one is how the first two get in by another door.
+///
+/// cork's cmgr rewrites every artifact archive before publishing it and
+/// fails the build outright on any entry that is not a regular file or a
+/// directory, so nothing it produces should ever be refused here. That is
+/// its guarantee, though, not this one's: the tarballs in the artifact
+/// directory are whatever wrote them, which for an older cmgr is an archive
+/// that passed through no such pass at all.
+fn artifact_object_path(entry: &Path, is_file: bool) -> Option<String> {
+    if !is_file {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for component in entry.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_str()?),
+            // Dropped, not refused. `tar czf x.tar.gz -C dir .` -- which is
+            // how a challenge's bundle is commonly made -- names every entry
+            // "./file", and Path::components keeps a *leading* CurDir even
+            // though it drops interior ones. Refusing it would reject
+            // ordinary archives. "." on its own leaves nothing behind and
+            // falls out as empty below.
+            std::path::Component::CurDir => continue,
+            // RootDir and Prefix are the absolute case, ParentDir the
+            // traversal one.
+            _ => return None,
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("/"))
 }
 
 #[derive(Debug)]
@@ -125,10 +197,17 @@ impl Backend for S3Backend {
         Ok(backend)
     }
 
+    /// Bytes are copied to the bucket, so the cache needs no unpacked copy of
+    /// them: this reads each build's tarball instead (upload_build), which on
+    /// a machine that builds an event's worth of challenges is a whole second
+    /// copy of the corpus not written.
+    const NEEDS_EXTRACTED_FILES: bool = false;
+
     async fn run(
         &self,
         cache_dir: &Path,
         namespaces: &HashSet<String>,
+        tarballs: &HashMap<BuildId, PathBuf>,
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
         // Check that we have sufficient IAM permissions. Better to do this up-front than to
@@ -138,7 +217,7 @@ impl Backend for S3Backend {
 
         // Sync existing artifacts
         info!("Syncing current artifact cache to S3");
-        self.synchronize(cache_dir, namespaces).await?;
+        self.synchronize(cache_dir, namespaces, tarballs).await?;
 
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
@@ -162,14 +241,14 @@ impl Backend for S3Backend {
             let mut processing_error: Option<anyhow::Error> = None;
             for event in events {
                 match event {
-                    BuildEvent::Create(build) => {
+                    BuildEvent::Create(build, tarball) => {
                         info!("Uploading artifacts for build {}", build);
-                        if let Err(e) = self.upload_cache_dir(cache_dir, &build).await {
+                        if let Err(e) = self.upload_build(cache_dir, &build, &tarball).await {
                             processing_error = Some(e);
                             break;
                         }
                     }
-                    BuildEvent::Update(build) => {
+                    BuildEvent::Update(build, tarball) => {
                         info!("Updating artifacts for build {}", build);
                         if let Err(e) = self.delete_bucket_dir(&build).await {
                             processing_error = Some(e);
@@ -177,7 +256,7 @@ impl Backend for S3Backend {
                         }
                         // S3 content changed after delete; capture upload result then
                         // record the build for invalidation regardless of upload outcome.
-                        let upload_result = self.upload_cache_dir(cache_dir, &build).await;
+                        let upload_result = self.upload_build(cache_dir, &build, &tarball).await;
                         invalidation_builds.push(build);
                         if let Err(e) = upload_result {
                             processing_error = Some(e);
@@ -284,33 +363,104 @@ impl S3Backend {
     }
 
     /// Uploads the specified build's cache directory to the S3 bucket.
-    async fn upload_cache_dir(&self, cache_dir: &Path, build: &str) -> Result<(), anyhow::Error> {
-        let mut build_cache_dir = PathBuf::from(cache_dir);
-        build_cache_dir.push(build);
-        for entry in WalkDir::new(&build_cache_dir).min_depth(1) {
-            let entry = entry?;
-            if !entry.file_type().is_file() {
+    /// Publishes a build's artifacts, reading them out of its tarball.
+    ///
+    /// Nothing is unpacked to disk. The tarball is read once and each entry
+    /// spooled to a single reusable temporary file, so what this costs in
+    /// local space is the largest file in the archive rather than the whole
+    /// corpus -- which on a machine that builds an event's worth of
+    /// challenges is the difference between a working disk and a full one.
+    ///
+    /// The spool is not avoidable: an object body has to be rewindable,
+    /// because a signed request that is retried has to be signed again over
+    /// the same bytes, and an entry inside a gzip stream can only be read
+    /// forwards once.
+    ///
+    /// The checksum is written last, and separately, because it is not in
+    /// the tarball: it is what synchronize compares against the cache to
+    /// decide whether a build needs uploading at all, so a build whose
+    /// objects are all up but whose checksum is not would be re-uploaded on
+    /// every start.
+    async fn upload_build(
+        &self,
+        cache_dir: &Path,
+        build: &str,
+        tarball: &Path,
+    ) -> Result<(), anyhow::Error> {
+        let mut spool_path = PathBuf::from(cache_dir);
+        spool_path.push(build);
+        spool_path.push(SPOOL_FILENAME);
+        let spool = SpoolFile(spool_path.clone());
+
+        let file = std::fs::File::open(tarball)?;
+        let mut archive = Archive::new(GzDecoder::new(file));
+        let mut published = 0usize;
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let is_file = entry.header().entry_type().is_file();
+            let entry_path = entry.path()?.into_owned();
+            let Some(member) = artifact_object_path(&entry_path, is_file) else {
+                // A directory entry has never been published and is not worth
+                // mentioning. Anything else is a file a player will not get:
+                // a symlink or a hard link, which cannot be an object, or a
+                // name this refuses. Said out loud, because the alternative
+                // is a download that quietly 404s.
+                if entry.header().entry_type().is_dir() {
+                    debug!("Skipping directory entry {}", entry_path.display());
+                } else {
+                    warn!(
+                        "Not publishing {} from {}: only regular files with plain relative \
+                         names are published",
+                        entry_path.display(),
+                        tarball.display()
+                    );
+                }
                 continue;
-            }
-            let relative_path = &entry.path().strip_prefix(&build_cache_dir)?;
-            let mut upload_path = PathBuf::from(&self.path_prefix);
-            upload_path.push(build);
-            upload_path.push(relative_path);
-            debug!("Uploading object: {}", upload_path.display());
-            let file = tokio::fs::File::open(&entry.path()).await?;
-            let body = ByteStream::read_from().file(file).build().await?;
+            };
+            // One path, truncated and refilled per entry, rather than a new
+            // temporary file for each of a build's files. Not fsynced: it is
+            // read back by this process a line later, and a crash in between
+            // costs a re-upload rather than a wrong object -- where an fsync
+            // per artifact file would cost one on every file of every build.
+            let mut sink = std::fs::File::create(&spool_path)?;
+            std::io::copy(&mut entry, &mut sink)?;
+            drop(sink);
+
+            let key = format!("{}{}/{}", self.path_prefix, build, member);
+            debug!("Uploading object: {key}");
+            let body = ByteStream::read_from()
+                .file(tokio::fs::File::open(&spool_path).await?)
+                .build()
+                .await?;
             self.s3_client
                 .put_object()
                 .bucket(&self.bucket)
-                .key(
-                    upload_path.to_str().unwrap_or_else(|| {
-                        panic!("Failed to convert path {:?} to utf-8", upload_path)
-                    }),
-                )
+                .key(&key)
                 .body(body)
                 .send()
                 .await?;
+            published += 1;
         }
+        debug!("Published {published} object(s) for build {build}");
+        drop(spool);
+
+        // The checksum, from the cache rather than recomputed: it is what the
+        // watcher wrote for this exact tarball.
+        let mut checksum_path = PathBuf::from(cache_dir);
+        checksum_path.push(build);
+        checksum_path.push(CHECKSUM_FILENAME);
+        let key = format!("{}{}/{}", self.path_prefix, build, CHECKSUM_FILENAME);
+        let body = ByteStream::read_from()
+            .file(tokio::fs::File::open(&checksum_path).await?)
+            .build()
+            .await?;
+        self.s3_client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .body(body)
+            .send()
+            .await?;
         Ok(())
     }
 
@@ -429,6 +579,7 @@ impl S3Backend {
         &self,
         cache_dir: &Path,
         namespaces: &HashSet<String>,
+        tarballs: &HashMap<BuildId, PathBuf>,
     ) -> Result<(), anyhow::Error> {
         // Get build keys and paths of all local cache directories
         let cache_dirs = crate::watcher::cache_build_ids(cache_dir, namespaces)?;
@@ -486,6 +637,15 @@ impl S3Backend {
 
         // Ensure that all bucket directories are up to date
         for (build_id, build_cache_dir) in &cache_dirs {
+            // The tarball this build was cached from, which is what its
+            // objects are read out of. A cache directory with no tarball is
+            // one sync_cache is about to remove -- it ran before this, so
+            // this can only be a tarball deleted in between -- and there is
+            // nothing to upload from.
+            let Some(tarball) = tarballs.get(build_id) else {
+                debug!("No tarball for cached build {build_id}, skipping");
+                continue;
+            };
             if bucket_build_ids.contains(build_id) {
                 let bucket_checksum = match self.get_bucket_dir_checksum(build_id).await {
                     Ok(c) => c,
@@ -513,7 +673,7 @@ impl S3Backend {
                     break;
                 }
                 invalidation_builds.push(build_id.clone());
-                if let Err(e) = self.upload_cache_dir(cache_dir, build_id).await {
+                if let Err(e) = self.upload_build(cache_dir, build_id, tarball).await {
                     sync_error = Some(e);
                     break;
                 }
@@ -522,7 +682,7 @@ impl S3Backend {
                     "Artifacts for build {} not found in bucket, uploading",
                     build_id
                 );
-                if let Err(e) = self.upload_cache_dir(cache_dir, build_id).await {
+                if let Err(e) = self.upload_build(cache_dir, build_id, tarball).await {
                     sync_error = Some(e);
                     break;
                 }
@@ -589,6 +749,104 @@ impl S3Backend {
 mod tests {
     use super::*;
 
+    /// An ordinary entry, at the root of the archive and nested, keeps its
+    /// path as the object key suffix.
+    #[test]
+    fn an_ordinary_entry_keeps_its_path() {
+        assert_eq!(
+            artifact_object_path(Path::new("BinEx101.c"), true).as_deref(),
+            Some("BinEx101.c")
+        );
+        assert_eq!(
+            artifact_object_path(Path::new("src/nested/file.bin"), true).as_deref(),
+            Some("src/nested/file.bin")
+        );
+    }
+
+    /// An absolute name is refused. This is the one that escapes: the key is
+    /// built by pushing the entry onto the build's prefix, and pushing an
+    /// absolute path throws away everything before it -- so the object would
+    /// land at the bucket root, outside any prefix a retirement deletes.
+    #[test]
+    fn an_absolute_entry_is_refused() {
+        for name in ["/etc/passwd", "/", "//tmp/x"] {
+            assert_eq!(
+                artifact_object_path(Path::new(name), true),
+                None,
+                "{name} was accepted as an object key"
+            );
+        }
+    }
+
+    /// A name with parent components is refused. It cannot traverse an S3
+    /// key, but CloudFront normalizes `a/../b` to `b` before the request
+    /// reaches the bucket, so the object would be published and permanently
+    /// unreachable.
+    #[test]
+    fn a_traversing_entry_is_refused() {
+        for name in ["../flag.txt", "a/../../b", "..", "a/.."] {
+            assert_eq!(
+                artifact_object_path(Path::new(name), true),
+                None,
+                "{name} was accepted as an object key"
+            );
+        }
+    }
+
+    /// A "./" prefix is dropped rather than refused, and that is not
+    /// leniency: `tar czf x.tar.gz -C dir .` -- which is how a challenge's
+    /// bundle is commonly made -- names every entry "./file". Refusing those
+    /// would reject ordinary archives. Only "." alone has nothing left to
+    /// publish once it is dropped.
+    #[test]
+    fn a_current_directory_prefix_is_dropped() {
+        assert_eq!(
+            artifact_object_path(Path::new("./BinEx101.c"), true).as_deref(),
+            Some("BinEx101.c")
+        );
+        assert_eq!(
+            artifact_object_path(Path::new("a/./b"), true).as_deref(),
+            Some("a/b")
+        );
+        assert_eq!(artifact_object_path(Path::new("."), true), None);
+    }
+
+    /// Dropping "." does not extend to "..": a parent component is refused
+    /// wherever it appears, including after a name that would seem to cancel
+    /// it. Nothing here knows whether that name was a directory or a symlink
+    /// to one, so nothing here gets to cancel anything.
+    #[test]
+    fn dropping_a_dot_does_not_drop_a_dotdot() {
+        assert_eq!(artifact_object_path(Path::new("./../x"), true), None);
+        assert_eq!(artifact_object_path(Path::new("a/./../x"), true), None);
+    }
+
+    /// Nothing but a regular file is published. A symlink or a device node
+    /// has no meaning as an object, and the tar crate would have applied its
+    /// own rules to those on extraction -- rules that do not exist here.
+    #[test]
+    fn only_regular_files_are_published() {
+        assert_eq!(artifact_object_path(Path::new("link"), false), None);
+        assert_eq!(artifact_object_path(Path::new("dir/"), false), None);
+    }
+
+    /// An empty name is refused rather than published at the build's own
+    /// prefix, which is where an empty suffix would put it.
+    #[test]
+    fn an_empty_entry_is_refused() {
+        assert_eq!(artifact_object_path(Path::new(""), true), None);
+    }
+
+    /// A backslash is an ordinary character in a POSIX filename and stays
+    /// one: it is not a separator here, and rewriting it would invent a key
+    /// the archive never named.
+    #[test]
+    fn a_backslash_is_an_ordinary_character() {
+        assert_eq!(
+            artifact_object_path(Path::new(r"weird\name.txt"), true).as_deref(),
+            Some(r"weird\name.txt")
+        );
+    }
     /// The ordinary case: some builds locally, some in the bucket, and the
     /// ones the bucket has that this host does not are stale.
     #[test]

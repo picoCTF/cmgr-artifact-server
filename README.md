@@ -9,10 +9,16 @@ backends. Like `cmgrd`, it is a single binary and requires minimal configuration
 The `CMGR_ARTIFACT_DIR` environment variable (also used by `cmgrd`) determines which artifacts to
 distribute, while the backend and any additional settings are specified via command-line options.
 
-Behind the scenes, `cmgr-artifact-server` maintains a cache of extracted artifact tarballs
-(`.artifact_server_cache`) within the specified `CMGR_ARTIFACT_DIR`. A full synchronization of all
-existing local artifacts to the backend is performed upon startup. Any further changes to local
-artifacts (due to build creation, updates, or deletion) are automatically handled as they occur.
+Behind the scenes, `cmgr-artifact-server` maintains a cache (`.artifact_server_cache`) within the
+specified `CMGR_ARTIFACT_DIR`. A full synchronization of all existing local artifacts to the
+backend is performed upon startup. Any further changes to local artifacts (due to build creation,
+updates, or deletion) are automatically handled as they occur.
+
+What that cache holds depends on the backend. The `selfhosted` backend serves files off local
+disk, so each tarball is unpacked into it. The `S3` backend copies bytes to a bucket and reads
+them out of the tarballs directly, so it keeps only a checksum per build — unpacking for it would
+mean a second copy of every artifact on the machine that builds them, which for a corpus of any
+size is most of a disk.
 
 ### Artifact namespaces
 

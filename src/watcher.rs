@@ -50,18 +50,37 @@ fn maybe_remove_dir(path: &Path) -> Result<(), std::io::Error> {
 
 /// Recreates the specified cache directory and extracts a tarball there.
 /// Also writes the tarball's checksum to a file named .__checksum.
-fn extract_to(cache_dir: &Path, tarball: &Path) -> Result<(), std::io::Error> {
+fn extract_to(cache_dir: &Path, tarball: &Path, extract: bool) -> Result<(), std::io::Error> {
     maybe_remove_dir(cache_dir)?;
     fs::create_dir_all(cache_dir)?;
-    let mut tarball_file = fs::File::open(tarball)?;
-    tarball_file.rewind()?;
-    let tar = GzDecoder::new(tarball_file);
-    let mut archive = Archive::new(tar);
-    archive.unpack(cache_dir)?;
+    if extract {
+        let mut tarball_file = fs::File::open(tarball)?;
+        tarball_file.rewind()?;
+        let tar = GzDecoder::new(tarball_file);
+        let mut archive = Archive::new(tar);
+        archive.unpack(cache_dir)?;
+    }
+    // Last, and always: it is what says the rest of this directory is current
+    // for this tarball, so a crash before it leaves the build looking
+    // uncached rather than cached and wrong. With extraction off it is the
+    // only thing here, and the directory exists to hold it.
     let mut checksum_path = PathBuf::from(cache_dir);
     checksum_path.push(CHECKSUM_FILENAME);
     fs::write(checksum_path, get_tarball_checksum(tarball)?)?;
     Ok(())
+}
+
+/// Whether a build's cache directory holds anything besides the checksum,
+/// which is all a backend that does not serve files off local disk needs of
+/// it. Anything else is a leftover: artifacts unpacked by a version that did
+/// serve them from here, or a spool file an interrupted upload left behind.
+fn holds_more_than_its_checksum(cache_dir: &Path) -> Result<bool, std::io::Error> {
+    for dir_entry in fs::read_dir(cache_dir)? {
+        if to_filename_str(&dir_entry?.path()) != CHECKSUM_FILENAME {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Converts a PathBuf to a filename string slice.
@@ -81,13 +100,14 @@ pub(crate) fn sync_cache(
     artifact_dir: &Path,
     cache_dir: &Path,
     digest_salt: Option<&str>,
+    extract: bool,
 ) -> Result<(), std::io::Error> {
     // The per-destination directories cork sorts a build plane's bundles
     // into, which both listings below are keyed by.
     let namespaces = artifact_namespaces(artifact_dir)?;
 
     // Collect build keys and paths of all existing artifact tarballs
-    let tarballs = artifact_tarballs(artifact_dir, &namespaces, digest_salt)?;
+    let tarballs = artifact_tarballs_by_build(artifact_dir, &namespaces, digest_salt)?;
     debug!("Found {} artifact tarballs", tarballs.len());
 
     // Collect build keys and paths of all existing cache dirs
@@ -100,13 +120,28 @@ pub(crate) fn sync_cache(
         if let Some(cache_dir) = cache_dirs.get(build_id) {
             reason = "outdated";
             if get_tarball_checksum(tarball_path)? == get_cache_dir_checksum(cache_dir)? {
+                // Current for this tarball. Unless it was unpacked by a
+                // version that unpacked for this backend and this one does
+                // not: the tarball has not changed, so nothing else would
+                // ever revisit this directory, and a copy of every artifact
+                // would be kept for the life of the cache by a server that
+                // never reads it. Reclaiming that disk is the whole of why
+                // extraction became optional.
+                if !extract && holds_more_than_its_checksum(cache_dir)? {
+                    info!(
+                        "Clearing unpacked artifacts for build {}, which this backend does not \
+                         serve from disk",
+                        build_id
+                    );
+                    extract_to(cache_dir, tarball_path, false)?;
+                }
                 continue;
             }
         }
         debug!("Cache for build {} is {}, recreating", build_id, reason);
         let mut build_cache_dir = PathBuf::from(cache_dir);
         build_cache_dir.push(build_id);
-        extract_to(&build_cache_dir, tarball_path)?;
+        extract_to(&build_cache_dir, tarball_path, extract)?;
     }
 
     // Remove any cache dirs without a matching tarball
@@ -127,6 +162,7 @@ pub(crate) fn watch_dir(
     artifact_dir: &Path,
     cache_dir: &Path,
     digest_salt: Option<&str>,
+    extract: bool,
 ) -> Receiver<BuildEvent> {
     let (tx, rx) = channel(32);
     thread::spawn({
@@ -205,6 +241,7 @@ pub(crate) fn watch_dir(
                                                     &cache_dir,
                                                     path,
                                                     digest_salt.as_deref(),
+                                                    extract,
                                                     &tx,
                                                 ) {
                                                     panic!(
@@ -225,14 +262,18 @@ pub(crate) fn watch_dir(
                                                 );
                                                 let mut cache_dir = PathBuf::from(&cache_dir);
                                                 cache_dir.push(&build_id);
-                                                extract_to(&cache_dir, path).unwrap_or_else(|_| {
-                                                    panic!(
-                                                        "Failed to extract artifact tarball {}",
-                                                        path.display()
-                                                    )
-                                                });
-                                                tx.blocking_send(BuildEvent::Create(build_id))
-                                                    .expect("Failed to send build event");
+                                                extract_to(&cache_dir, path, extract)
+                                                    .unwrap_or_else(|_| {
+                                                        panic!(
+                                                            "Failed to extract artifact tarball {}",
+                                                            path.display()
+                                                        )
+                                                    });
+                                                tx.blocking_send(BuildEvent::Create(
+                                                    build_id,
+                                                    path.clone(),
+                                                ))
+                                                .expect("Failed to send build event");
                                             }
                                         }
                                     }
@@ -249,14 +290,18 @@ pub(crate) fn watch_dir(
                                                 );
                                                 let mut cache_dir = PathBuf::from(&cache_dir);
                                                 cache_dir.push(&build_id);
-                                                extract_to(&cache_dir, path).unwrap_or_else(|_| {
-                                                    panic!(
-                                                        "Failed to extract artifact tarball {}",
-                                                        path.display()
-                                                    )
-                                                });
-                                                tx.blocking_send(BuildEvent::Update(build_id))
-                                                    .expect("Failed to send build event");
+                                                extract_to(&cache_dir, path, extract)
+                                                    .unwrap_or_else(|_| {
+                                                        panic!(
+                                                            "Failed to extract artifact tarball {}",
+                                                            path.display()
+                                                        )
+                                                    });
+                                                tx.blocking_send(BuildEvent::Update(
+                                                    build_id,
+                                                    path.clone(),
+                                                ))
+                                                .expect("Failed to send build event");
                                             }
                                         }
                                     }
@@ -364,6 +409,7 @@ fn resync_namespace(
     cache_dir: &Path,
     namespace_dir: &Path,
     digest_salt: Option<&str>,
+    extract: bool,
     tx: &tokio::sync::mpsc::Sender<BuildEvent>,
 ) -> Result<(), std::io::Error> {
     for dir_entry in fs::read_dir(namespace_dir)? {
@@ -382,8 +428,8 @@ fn resync_namespace(
             continue;
         }
         info!("Creating artifact cache for build {}", build_id);
-        extract_to(&build_cache_dir, &path_buf)?;
-        tx.blocking_send(BuildEvent::Create(build_id))
+        extract_to(&build_cache_dir, &path_buf, extract)?;
+        tx.blocking_send(BuildEvent::Create(build_id, path_buf))
             .expect("Failed to send build event");
     }
     Ok(())
@@ -404,7 +450,7 @@ pub(crate) fn artifact_namespaces(artifact_dir: &Path) -> Result<HashSet<String>
 
 /// Every artifact tarball under the artifact directory, by build key: the
 /// directory itself, and one level down into each namespace cork marked.
-fn artifact_tarballs(
+pub(crate) fn artifact_tarballs_by_build(
     artifact_dir: &Path,
     namespaces: &HashSet<String>,
     digest_salt: Option<&str>,
@@ -528,6 +574,111 @@ mod tests {
         dir
     }
 
+    /// Writes a gzipped tarball holding the given files.
+    fn write_tarball(path: &Path, files: &[(&str, &[u8])]) {
+        let file = fs::File::create(path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, data) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, name, *data).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    /// The contents of a cache directory, sorted, for comparison.
+    fn dir_entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| to_filename_str(&e.unwrap().path()).to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// With extraction off the cache holds one checksum per build and nothing
+    /// else. That is the whole point of it: unpacking every tarball on the
+    /// machine that builds them is a second copy of the entire corpus, and a
+    /// backend that copies the bytes elsewhere never reads that copy.
+    #[test]
+    fn extraction_can_be_skipped() {
+        let root = TempDir::new("noextract");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(
+            &tarball,
+            &[("BinEx101", b"binary"), ("BinEx101.c", b"source")],
+        );
+        let cache = root.path().join("cache").join("7");
+
+        extract_to(&cache, &tarball, false).unwrap();
+        assert_eq!(dir_entries(&cache), vec![CHECKSUM_FILENAME.to_string()]);
+    }
+
+    /// With extraction on the files are there, because the selfhosted backend
+    /// serves them straight off this directory.
+    #[test]
+    fn extraction_writes_the_files() {
+        let root = TempDir::new("extract");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(
+            &tarball,
+            &[("BinEx101", b"binary"), ("BinEx101.c", b"source")],
+        );
+        let cache = root.path().join("cache").join("7");
+
+        extract_to(&cache, &tarball, true).unwrap();
+        assert_eq!(
+            dir_entries(&cache),
+            vec![
+                CHECKSUM_FILENAME.to_string(),
+                "BinEx101".to_string(),
+                "BinEx101.c".to_string()
+            ]
+        );
+        assert_eq!(fs::read(cache.join("BinEx101.c")).unwrap(), b"source");
+    }
+
+    /// The checksum is of the tarball, so it does not depend on whether the
+    /// tarball was unpacked. It has to not: it is what the bucket is compared
+    /// against to decide whether a build needs uploading, and turning
+    /// extraction off must not make every build look changed.
+    #[test]
+    fn the_checksum_does_not_depend_on_extraction() {
+        let root = TempDir::new("checksum");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+
+        let unpacked = root.path().join("cache-a").join("7");
+        let bare = root.path().join("cache-b").join("7");
+        extract_to(&unpacked, &tarball, true).unwrap();
+        extract_to(&bare, &tarball, false).unwrap();
+
+        assert_eq!(
+            get_cache_dir_checksum(&unpacked).unwrap(),
+            get_cache_dir_checksum(&bare).unwrap()
+        );
+    }
+
+    /// Re-running over a directory that was extracted leaves only the
+    /// checksum. A host that switches backends, or upgrades into one that no
+    /// longer unpacks, would otherwise keep serving a stale unpacked copy
+    /// and keep paying for it.
+    #[test]
+    fn skipping_extraction_clears_a_previously_extracted_cache() {
+        let root = TempDir::new("switch");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache = root.path().join("cache").join("7");
+
+        extract_to(&cache, &tarball, true).unwrap();
+        assert!(cache.join("BinEx101.c").is_file());
+
+        extract_to(&cache, &tarball, false).unwrap();
+        assert_eq!(dir_entries(&cache), vec![CHECKSUM_FILENAME.to_string()]);
+    }
     fn touch(path: &Path) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -648,7 +799,7 @@ mod tests {
         touch(&root.path().join("binex101").join("4.tar.gz"));
 
         let namespaces = artifact_namespaces(root.path()).unwrap();
-        let tarballs = artifact_tarballs(root.path(), &namespaces, None).unwrap();
+        let tarballs = artifact_tarballs_by_build(root.path(), &namespaces, None).unwrap();
         let mut keys: Vec<_> = tarballs.keys().cloned().collect();
         keys.sort();
         assert_eq!(keys, vec!["1", "event/3", "library/2"]);

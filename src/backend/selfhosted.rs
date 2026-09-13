@@ -1,5 +1,5 @@
-use crate::BuildEvent;
 use crate::backend::Backend;
+use crate::{BuildEvent, BuildId};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_staticfile::{Body, Static};
@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Receiver;
 
@@ -63,10 +63,15 @@ impl Backend for SelfhostedBackend {
         Ok(backend)
     }
 
+    /// The cache is what this serves: it is a static file server rooted at
+    /// it, so every artifact has to be a real file on disk.
+    const NEEDS_EXTRACTED_FILES: bool = true;
+
     async fn run(
         &self,
         cache_dir: &Path,
         _namespaces: &HashSet<String>,
+        _tarballs: &HashMap<BuildId, PathBuf>,
         mut _rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
         let static_ = Static::new(cache_dir);
