@@ -11,7 +11,9 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use watcher::{artifact_namespaces, artifact_tarballs_by_build, sync_cache, watch_dir};
+use watcher::{
+    artifact_namespaces, artifact_tarballs_by_build, kept_bucket_dirs, sync_cache, watch_dir,
+};
 
 /// Name of file containing a tarball checksum inside a cache directory.
 pub(crate) const CHECKSUM_FILENAME: &str = ".__checksum";
@@ -22,6 +24,14 @@ pub(crate) const CHECKSUM_FILENAME: &str = ".__checksum";
 /// is every challenge where the artifact directory and the challenge tree are
 /// the same path, which is cmgr's ansible role's default.
 pub(crate) const NAMESPACE_MARKER_FILENAME: &str = ".cork-artifact-namespace";
+
+/// Name of the empty file an operator writes into a subdirectory of
+/// CMGR_ARTIFACT_DIR to say that the bucket directory of the same name is not
+/// this server's to remove. The startup sweep removes whatever the bucket
+/// holds that the artifact directory does not; this is how the artifact
+/// directory says it holds that too, when what is there -- a docs site, some
+/// other team's files -- was never published from here.
+pub(crate) const DONT_PURGE_MARKER_FILENAME: &str = ".dont-purge";
 
 /// A build's key: the name of its cache directory, and the path its artifact
 /// files are published under. Either a build ID (digested, with a salt) or
@@ -132,6 +142,13 @@ async fn main() -> Result<(), anyhow::Error> {
     let namespaces = artifact_namespaces(&artifact_dir)?;
     debug!("Determined artifact namespaces: {namespaces:?}");
 
+    // The bucket directories an operator has marked as not this server's to
+    // remove. Read once: the startup sweep is the only thing that removes a
+    // directory with no local build, and it has run by the time one could be
+    // marked later.
+    let kept = kept_bucket_dirs(&artifact_dir)?;
+    debug!("Determined bucket directories to keep: {kept:?}");
+
     // The tarball each cached build came from, for a backend that publishes
     // their contents directly. Taken before the watcher starts so that the
     // startup synchronization has every build the cache knows about; a
@@ -146,13 +163,13 @@ async fn main() -> Result<(), anyhow::Error> {
         "selfhosted" => {
             SelfhostedBackend::new(backend_options)
                 .await?
-                .run(&cache_dir, &namespaces, &tarballs, rx)
+                .run(&cache_dir, &namespaces, &kept, &tarballs, rx)
                 .await
         }
         "s3" => {
             S3Backend::new(backend_options)
                 .await?
-                .run(&cache_dir, &namespaces, &tarballs, rx)
+                .run(&cache_dir, &namespaces, &kept, &tarballs, rx)
                 .await
         }
         _ => panic!("Unreachable - invalid backend"), // TODO: use enum instead

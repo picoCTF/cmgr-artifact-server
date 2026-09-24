@@ -38,6 +38,10 @@ pub(crate) trait Backend: Sized {
     /// unpacked tarball as well when NEEDS_EXTRACTED_FILES is true. It is kept up to date by a
     /// background thread when the server is run as a binary.
     ///
+    /// It is given `kept`, the top-level directories of its published tree that an operator has
+    /// marked as not its to remove (DONT_PURGE_MARKER_FILENAME). A backend that removes what it
+    /// finds no local build for must leave these, and everything under them, alone.
+    ///
     /// It is also given `tarballs`, the source tarball of every build the cache knows about, by
     /// the same key. A backend that does not need the files reads them from there; one that does
     /// can ignore it.
@@ -58,6 +62,7 @@ pub(crate) trait Backend: Sized {
         &self,
         cache_dir: &Path,
         namespaces: &HashSet<String>,
+        kept: &HashSet<String>,
         tarballs: &HashMap<BuildId, PathBuf>,
         rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error>;

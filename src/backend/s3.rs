@@ -1,5 +1,7 @@
 use crate::backend::Backend;
-use crate::{BuildEvent, BuildId, CHECKSUM_FILENAME, get_cache_dir_checksum};
+use crate::{
+    BuildEvent, BuildId, CHECKSUM_FILENAME, DONT_PURGE_MARKER_FILENAME, get_cache_dir_checksum,
+};
 use aws_config::BehaviorVersion;
 use aws_config::retry::RetryConfig;
 use aws_sdk_cloudfront::types::{InvalidationBatch, Paths};
@@ -54,6 +56,20 @@ fn orphan_sweep(prune_orphans: bool, local_builds: usize, bucket_builds: usize) 
         );
     }
     OrphanSweep::Run
+}
+
+/// Whether the sweep must leave a bucket directory alone: one an operator
+/// marked (DONT_PURGE_MARKER_FILENAME), or a build inside one.
+///
+/// The sweep treats every directory the bucket holds as this server's, which
+/// under a bucket shared with anything else is not so. A marked directory is
+/// not a candidate at all -- not removed, and not counted as a build the
+/// bucket holds.
+fn is_kept(dir: &str, kept: &HashSet<String>) -> bool {
+    kept.contains(dir)
+        || dir
+            .split_once('/')
+            .is_some_and(|(top, _)| kept.contains(top))
 }
 
 /// Name of the file each tarball entry is spooled through on its way to the
@@ -226,6 +242,7 @@ impl Backend for S3Backend {
         &self,
         cache_dir: &Path,
         namespaces: &HashSet<String>,
+        kept: &HashSet<String>,
         tarballs: &HashMap<BuildId, PathBuf>,
         mut rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {
@@ -236,7 +253,8 @@ impl Backend for S3Backend {
 
         // Sync existing artifacts
         info!("Syncing current artifact cache to S3");
-        self.synchronize(cache_dir, namespaces, tarballs).await?;
+        self.synchronize(cache_dir, namespaces, kept, tarballs)
+            .await?;
 
         // Handle build events
         info!("Watching for changes. Press CTRL-C to exit.");
@@ -655,6 +673,7 @@ impl S3Backend {
         &self,
         cache_dir: &Path,
         namespaces: &HashSet<String>,
+        kept: &HashSet<String>,
         tarballs: &HashMap<BuildId, PathBuf>,
     ) -> Result<(), anyhow::Error> {
         // Get build keys and paths of all local cache directories
@@ -766,35 +785,49 @@ impl S3Backend {
         }
 
         // Remove any bucket directories without a corresponding local cache,
-        // unless something says not to (see OrphanSweep).
+        // unless something says not to (see OrphanSweep). What an operator
+        // marked as kept is not this server's, so it is neither a candidate
+        // nor a build the bucket is counted as holding (see is_kept).
+        let (kept_dirs, ours): (Vec<&String>, Vec<&String>) =
+            bucket_build_ids.iter().partition(|id| is_kept(id, kept));
+        let orphans: Vec<&String> = ours
+            .iter()
+            .copied()
+            .filter(|id| !cache_dirs.contains_key(*id))
+            .collect();
+        for dir in &kept_dirs {
+            debug!("Leaving bucket directory {dir} alone: marked {DONT_PURGE_MARKER_FILENAME}");
+        }
         let sweep = match sync_error {
             Some(_) => OrphanSweep::Skip("an earlier step of this synchronization failed"),
-            None => orphan_sweep(self.prune_orphans, cache_dirs.len(), bucket_build_ids.len()),
+            None => orphan_sweep(self.prune_orphans, cache_dirs.len(), ours.len()),
         };
         if let OrphanSweep::Skip(why) = sweep {
-            let orphans = bucket_build_ids
-                .iter()
-                .filter(|id| !cache_dirs.contains_key(*id))
-                .count();
-            if orphans > 0 {
+            if !orphans.is_empty() {
                 warn!(
-                    "Not removing {orphans} bucket directory (or directories) with no local \
-                     artifact: {why}. Nothing has been removed from the bucket."
+                    "Not removing {} bucket directory (or directories) with no local \
+                     artifact: {why}. Nothing has been removed from the bucket.",
+                    orphans.len()
                 );
             }
         } else {
-            for build_id in &bucket_build_ids {
-                if !&cache_dirs.contains_key(build_id) {
-                    info!(
-                        "Artifacts found in bucket for deleted build {}, removing",
-                        build_id
-                    );
-                    if let Err(e) = self.delete_bucket_dir(build_id).await {
-                        sync_error = Some(e);
-                        break;
-                    }
-                    invalidation_builds.push(build_id.clone());
+            if !kept_dirs.is_empty() {
+                info!(
+                    "Keeping {} bucket directory (or directories) marked \
+                     {DONT_PURGE_MARKER_FILENAME}",
+                    kept_dirs.len()
+                );
+            }
+            for build_id in orphans {
+                info!(
+                    "Artifacts found in bucket for deleted build {}, removing",
+                    build_id
+                );
+                if let Err(e) = self.delete_bucket_dir(build_id).await {
+                    sync_error = Some(e);
+                    break;
                 }
+                invalidation_builds.push(build_id.clone());
             }
         }
 
@@ -1100,6 +1133,7 @@ mod tests {
             .synchronize(
                 &cache_dir,
                 &HashSet::from(["library".to_string()]),
+                &HashSet::new(),
                 &HashMap::new(),
             )
             .await
@@ -1138,6 +1172,7 @@ mod tests {
             .synchronize(
                 &cache_dir,
                 &HashSet::from(["library".to_string()]),
+                &HashSet::new(),
                 &HashMap::new(),
             )
             .await
@@ -1176,6 +1211,7 @@ mod tests {
             .synchronize(
                 &cache_dir,
                 &HashSet::from(["library".to_string()]),
+                &HashSet::new(),
                 &HashMap::from([("7".to_string(), tarball)]),
             )
             .await
@@ -1197,6 +1233,48 @@ mod tests {
         assert!(
             requests.iter().any(|r| r.starts_with("POST /arts/?delete")),
             "the stale build was not deleted: {requests:?}"
+        );
+    }
+
+    /// A directory an operator marked is left out of the sweep entirely --
+    /// not even listed -- while a stale build beside it is still removed. The
+    /// bucket is shared with something this server never published, and
+    /// keeping that from being swept must not cost the sweep itself.
+    #[tokio::test]
+    async fn a_marked_directory_is_not_removed() {
+        let root = TempDir::new("keep");
+        let tarball = root.path().join("7.tar.gz");
+        write_tarball(&tarball, &[("BinEx101.c", b"source")]);
+        let cache_dir = root.path().join("cache");
+        cached_build(&cache_dir, "7", b"same");
+
+        let http = StaticReplayClient::new(vec![
+            lists_directories(&["7/", "library/", "other-stuff/"]),
+            lists_directories(&["library/9/"]),
+            responds("same"),
+            // library/9 has no local artifact and is not marked: removed.
+            lists_objects(&["library/9/BinEx101.c", "library/9/.__checksum"]),
+            deleted(),
+        ]);
+        let backend = backend(&http, &[("bucket", "arts")]);
+        backend
+            .synchronize(
+                &cache_dir,
+                &HashSet::from(["library".to_string()]),
+                &HashSet::from(["other-stuff".to_string()]),
+                &HashMap::from([("7".to_string(), tarball)]),
+            )
+            .await
+            .unwrap();
+
+        let requests = requests(&http);
+        assert!(
+            !requests.iter().any(|r| r.contains("other-stuff")),
+            "the marked directory was touched: {requests:?}"
+        );
+        assert!(
+            requests.iter().any(|r| r.contains("prefix=library%2F9%2F")),
+            "the stale build beside it was not removed: {requests:?}"
         );
     }
 
@@ -1401,6 +1479,19 @@ mod tests {
     #[test]
     fn a_partial_cache_still_sweeps() {
         assert_eq!(orphan_sweep(true, 1, 400), OrphanSweep::Run);
+    }
+
+    /// A mark covers the directory and everything under it, and nothing that
+    /// merely shares its name as a prefix.
+    #[test]
+    fn a_mark_covers_its_directory_and_nothing_beside_it() {
+        let kept = HashSet::from(["other-stuff".to_string(), "library".to_string()]);
+        assert!(is_kept("other-stuff", &kept));
+        assert!(is_kept("library/9", &kept));
+        assert!(!is_kept("other-stuff-2", &kept));
+        assert!(!is_kept("fooEvent/9", &kept));
+        assert!(!is_kept("7", &kept));
+        assert!(!is_kept("7", &HashSet::new()));
     }
 
     /// Disabled means disabled, whatever is or is not on disk.

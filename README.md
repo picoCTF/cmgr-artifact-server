@@ -174,3 +174,18 @@ Two safeguards, because this pass is destructive:
   statement that every build was deleted.
 - `-o prune-orphans=false` disables the pass entirely. Use it where the artifact directory is not
   the durable record of what exists, such as a build server whose disk does not outlive it.
+
+The pass treats every directory under the bucket's `path-prefix` (the whole bucket, if none is set)
+as this server's. To share a bucket with something this server did not publish, mark each such
+directory instead of turning the pass off: create a directory with the same name in
+`CMGR_ARTIFACT_DIR` and put an empty `.dont-purge` file in it. The bucket directory of that name,
+and everything under it, is then never removed by this pass.
+
+```bash
+# Keep s3://my-bucket/other-stuff/ (no path-prefix), while library/ and fooEvent/ are still pruned:
+$ mkdir -p "$CMGR_ARTIFACT_DIR/other-stuff" && touch "$CMGR_ARTIFACT_DIR/other-stuff/.dont-purge"
+```
+
+Names are relative to `path-prefix`, and only a top-level subdirectory is read. The marks are read
+at startup, which is also the only time the pass runs. Removing the directory lets the next startup
+prune the bucket directory like any other.

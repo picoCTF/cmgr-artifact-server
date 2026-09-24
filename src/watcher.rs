@@ -1,6 +1,6 @@
 use crate::{BuildId, get_cache_dir_checksum};
 
-use super::{BuildEvent, CHECKSUM_FILENAME, NAMESPACE_MARKER_FILENAME};
+use super::{BuildEvent, CHECKSUM_FILENAME, DONT_PURGE_MARKER_FILENAME, NAMESPACE_MARKER_FILENAME};
 use blake2::{Blake2b512, Digest};
 use flate2::read::GzDecoder;
 use hex::ToHex;
@@ -459,6 +459,22 @@ pub(crate) fn artifact_namespaces(artifact_dir: &Path) -> Result<HashSet<String>
     Ok(namespaces)
 }
 
+/// The bucket directories an operator has marked as not this server's to
+/// remove, by name: each subdirectory of the artifact directory holding a
+/// DONT_PURGE_MARKER_FILENAME. Only the top level, as with namespaces -- it
+/// is the level the sweep removes whole directories at.
+pub(crate) fn kept_bucket_dirs(artifact_dir: &Path) -> Result<HashSet<String>, std::io::Error> {
+    let mut kept = HashSet::new();
+    for dir_entry in fs::read_dir(artifact_dir)? {
+        let path_buf = dir_entry?.path();
+        if path_buf.is_dir() && path_buf.join(DONT_PURGE_MARKER_FILENAME).is_file() {
+            debug!("Found bucket directory to keep {}", path_buf.display());
+            kept.insert(to_filename_str(&path_buf).to_owned());
+        }
+    }
+    Ok(kept)
+}
+
 /// Every artifact tarball under the artifact directory, by build key: the
 /// directory itself, and one level down into each namespace cork marked.
 pub(crate) fn artifact_tarballs_by_build(
@@ -723,6 +739,31 @@ mod tests {
             found,
             HashSet::from(["library".to_string(), "event".to_string()])
         );
+    }
+
+    /// Only directories holding the mark are kept, and only at the top level:
+    /// a namespace is not kept for being a namespace, and a mark deeper down
+    /// names nothing the sweep removes whole.
+    #[test]
+    fn kept_bucket_dirs_are_the_marked_directories() {
+        let root = TempDir::new("kept");
+        touch(
+            &root
+                .path()
+                .join("other-stuff")
+                .join(DONT_PURGE_MARKER_FILENAME),
+        );
+        namespace_dir(root.path(), "library");
+        touch(
+            &namespace_dir(root.path(), "event")
+                .join("nested")
+                .join(DONT_PURGE_MARKER_FILENAME),
+        );
+        fs::create_dir_all(root.path().join("binex101")).unwrap();
+        touch(&root.path().join(DONT_PURGE_MARKER_FILENAME));
+
+        let found = kept_bucket_dirs(root.path()).unwrap();
+        assert_eq!(found, HashSet::from(["other-stuff".to_string()]));
     }
 
     /// Every tarball, in the artifact directory and one level down into each
