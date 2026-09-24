@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.1.0
 
 - The `S3` backend's startup removal of orphaned bucket directories can now be told to leave a bucket directory alone: create a directory with the same name in `CMGR_ARTIFACT_DIR` and put an empty `.dont-purge` file in it. For example, `$CMGR_ARTIFACT_DIR/other-stuff/.dont-purge` keeps `other-stuff/` in the bucket (under `path-prefix`, if one is set). This lets a bucket be shared with files this server did not publish without turning the removal off (`-o prune-orphans=false`) for everything else. See [orphan removal](README.md#orphan-removal).
 
