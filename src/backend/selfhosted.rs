@@ -71,6 +71,7 @@ impl Backend for SelfhostedBackend {
         &self,
         cache_dir: &Path,
         _namespaces: &HashSet<String>,
+        _kept: &HashSet<String>,
         _tarballs: &HashMap<BuildId, PathBuf>,
         mut _rx: Receiver<BuildEvent>,
     ) -> Result<(), anyhow::Error> {

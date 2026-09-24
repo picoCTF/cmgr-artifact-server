@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The `S3` backend's startup removal of orphaned bucket directories can now be told to leave a bucket directory alone: create a directory with the same name in `CMGR_ARTIFACT_DIR` and put an empty `.dont-purge` file in it. For example, `$CMGR_ARTIFACT_DIR/other-stuff/.dont-purge` keeps `other-stuff/` in the bucket (under `path-prefix`, if one is set). This lets a bucket be shared with files this server did not publish without turning the removal off (`-o prune-orphans=false`) for everything else. See [orphan removal](README.md#orphan-removal).
+
 ## v3.0.0
 
 **Breaking.** The `S3` backend no longer unpacks artifact tarballs to local disk. Artifacts published to a bucket are identical, but `.artifact_server_cache` now holds only a checksum per build rather than a copy of every artifact, so a host using this backend needs far less disk. The `selfhosted` backend is unchanged and still unpacks, since it serves those files directly.
