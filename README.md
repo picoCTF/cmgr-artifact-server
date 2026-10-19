@@ -22,7 +22,7 @@ size is most of a disk.
 
 ### Artifact namespaces
 
-A [cork](https://github.com/CyLabAcademy/challenge-orchestrator) build plane builds for several
+A [cork](https://github.com/CyLabAcademy/cork) build plane builds for several
 orchestrators at once, and sorts each schema's tarballs into a subdirectory of `CMGR_ARTIFACT_DIR`
 named for the destination it was built for. Those subdirectories are picked up automatically, and a
 build found in one is published under a matching path: a tarball at `library/7.tar.gz` becomes
@@ -38,7 +38,7 @@ a plain `cmgr`/`cmgrd` deployment is unaffected.
 
 ## Installation
 
-Download the latest [release](https://github.com/picoCTF/cmgr-artifact-server/releases) for your
+Download the latest [release](https://github.com/CyLabAcademy/cmgr-artifact-server/releases) for your
 platform, extract the tarball, and copy the binary to an appropriate location:
 
 ```bash
@@ -75,7 +75,7 @@ $ curl http://localhost:4201/1                          # 404 Not Found
 $ curl http://localhost:4201/1/artifacts.tar.gz         # 404 Not Found
 ```
 
-When using the this backend with the [picoCTF platform](https://github.com/picoCTF/platform) (note:
+When using the this backend with the [CyLabAcademy platform](https://github.com/CyLabAcademy/academy-platform) (note:
 not yet publicly available), specify `http://hostname:4201` as the challenge server's **artifact
 base URL**.
 
@@ -118,7 +118,7 @@ associated resources:
 
 The backend will check that all necessary IAM actions can be performed before starting.
 
-When using this backend with the [picoCTF platform](https://github.com/picoCTF/platform) (note: not
+When using this backend with the [CyLab Academy platform](https://github.com/CyLabAcademy/academy-platform) (note: not
 yet publicly available), specify your bucket or CloudFront distribution URL (including path prefix,
 if applicable) as the challenge server's **artifact base URL**.
 
